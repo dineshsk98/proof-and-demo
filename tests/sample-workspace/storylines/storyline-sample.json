@@ -1,0 +1,110 @@
+{
+  "variants": [
+    {
+      "structure": "Sample: problem first",
+      "hook": "Your last demo broke on camera.",
+      "opening_moment": "The web app opens on a storyline with every step marked not built yet.",
+      "subject_project": "the tool",
+      "closing_moment": "The finished video plays with its proof card.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Day-one plan",
+          "what_is_shown": "The storyline page with its steps.",
+          "narration": "On day one it plans the demo.",
+          "target_seconds": 30,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        },
+        {
+          "number": 2,
+          "title": "Progress from docs",
+          "what_is_shown": "A session doc turns into a checklist.",
+          "narration": "It reads my notes, never my code.",
+          "target_seconds": 45,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        },
+        {
+          "number": 3,
+          "title": "Secrets boxed out",
+          "what_is_shown": "A planted fake key gets a solid box.",
+          "narration": "Meta never sees your secrets.",
+          "target_seconds": 45,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        },
+        {
+          "number": 4,
+          "title": "Take check",
+          "what_is_shown": "A failed step with its frame.",
+          "narration": "Step 3 failed at 0:42.",
+          "target_seconds": 45,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        }
+      ]
+    },
+    {
+      "structure": "Sample: result first",
+      "hook": "Watch this video make itself.",
+      "opening_moment": "The web app opens on a storyline with every step marked not built yet.",
+      "subject_project": "the tool",
+      "closing_moment": "The finished video plays with its proof card.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Day-one plan",
+          "what_is_shown": "The storyline page with its steps.",
+          "narration": "On day one it plans the demo.",
+          "target_seconds": 30,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        },
+        {
+          "number": 2,
+          "title": "Progress from docs",
+          "what_is_shown": "A session doc turns into a checklist.",
+          "narration": "It reads my notes, never my code.",
+          "target_seconds": 45,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        },
+        {
+          "number": 3,
+          "title": "Secrets boxed out",
+          "what_is_shown": "A planted fake key gets a solid box.",
+          "narration": "Meta never sees your secrets.",
+          "target_seconds": 45,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        },
+        {
+          "number": 4,
+          "title": "Take check",
+          "what_is_shown": "A failed step with its frame.",
+          "narration": "Step 3 failed at 0:42.",
+          "target_seconds": 45,
+          "judging_criteria": [
+            "Demo"
+          ],
+          "status": "not built yet"
+        }
+      ]
+    }
+  ]
+}

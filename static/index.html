@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo companion</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1>Demo companion</h1>
+      <nav>
+        <a href="#storyline" id="nav-storyline">Storyline</a>
+        <a href="#readiness" id="nav-readiness">Readiness board</a>
+      </nav>
+      <div class="draft">
+        <button id="draft-button" type="button">Draft storyline</button>
+      </div>
+    </div>
+    <div class="topbar-inner draft-line">
+      <p id="draft-status" aria-live="polite">Drafting is a live Muse Spark call on workspace/inputs/idea.md (the spec if it's missing) and judging.md.</p>
+    </div>
+  </header>
+
+  <main>
+    <section id="storyline-view"></section>
+    <section id="readiness-view"></section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
