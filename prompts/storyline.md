@@ -26,8 +26,8 @@ Fields for each variant:
 - steps: in order. Each step has:
   - number: starting at 1.
   - title: short.
-  - what_is_shown: full sentences describing the end state on screen when the step is done, specific enough that the builder can check a recorded take against it.
-  - narration: what the builder says over this step, in one or two short sentences.
+  - what_is_shown: full sentences describing the end state on screen when the step is done, specific enough that the builder can check a recorded take against it. One main thing, in at most {{MAX_SHOWN_WORDS}} words.
+  - narration: what the builder says over this step, in one or two short sentences. It must fit the step's time: at most {{WORDS_PER_SECOND}} words per second of target_seconds.
   - target_seconds: a whole number.
   - judging_criteria: the criteria this step gives evidence for, using the names exactly as written in RULES.
   - status: "not built yet".
