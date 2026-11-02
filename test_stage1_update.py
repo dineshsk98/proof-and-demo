@@ -1,4 +1,5 @@
-# Offline tests for stage1_update.py: a fake redact module and a fake client, so nothing is sent to Meta.
+# Offline tests for stage1_update.py: a fake client, so nothing is sent to Meta.
+# They use the real redact.py when it exists, and a fake redact module otherwise.
 # Run: python test_stage1_update.py
 import contextlib
 import copy
@@ -11,21 +12,25 @@ import sys
 import tempfile
 import types
 
-SECRET = "sk-test-PLANTED-0000"
+SECRET = "sk-test-PLANTED-0000-abcdefgh"  # long enough for redact.py's sk- pattern (20+ chars after "sk-")
 EMAIL = "alice@example.com"
 
 
 def fake_redact_text(text):
-    # Stands in for branch C's redact_text(text) -> (clean_text, findings).
+    # Stands in for branch C's redact_text(text) -> (clean_text, findings), with the same kind names.
     findings = []
-    for value, kind in [(SECRET, "api_key"), (EMAIL, "email")]:
+    for value, kind in [(SECRET, "openai_style_key"), (EMAIL, "email")]:
         for _ in range(text.count(value)):
             findings.append({"kind": kind, "preview": value[:3] + "…"})
         text = text.replace(value, f"[REDACTED:{kind}]")
     return text, findings
 
 
-sys.modules["redact"] = types.SimpleNamespace(redact_text=fake_redact_text)
+if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "redact.py")):
+    print("Using the real redact.py")
+else:
+    print("Using a fake redact module (redact.py is missing)")
+    sys.modules["redact"] = types.SimpleNamespace(redact_text=fake_redact_text)
 import stage1_update  # noqa: E402  (must come after the fake redact module)
 
 REPLY = None  # the fake model's reply text for the next call
@@ -157,13 +162,13 @@ def test_good_reply():
     [call] = CALLS
     prompt = call["kwargs"]["input"]
     assert SECRET not in prompt and EMAIL not in prompt, "a secret reached the prompt"
-    assert "[REDACTED:api_key]" in prompt and "[REDACTED:email]" in prompt
+    assert "[REDACTED:openai_style_key]" in prompt and "[REDACTED:email]" in prompt
     assert "SIDECAR-SHOULD-NOT-BE-SENT" not in prompt, "a .json sidecar was sent"
     assert "{{" not in prompt, "a placeholder was left in the prompt"
     assert "1. Upload a take" in prompt and "Second variant step" not in prompt
     assert call["kwargs"]["text"]["format"]["strict"] is True
     assert call["kwargs"]["model"] == "muse-spark-1.3"
-    assert "Redacted 2 findings before the call: api_key 1, email 1" in call["printed_before"], call["printed_before"]
+    assert "Redacted 2 findings before the call: email 1, openai_style_key 1" in call["printed_before"], call["printed_before"]
     print("ok  good reply: wrote .json and .md; prompt redacted; counts printed before the call")
 
 
