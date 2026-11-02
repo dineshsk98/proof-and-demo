@@ -14,12 +14,15 @@ MAX_OUTPUT_TOKENS = 32000  # room for 6 variants (about 15-20k tokens) plus reas
 MAX_SECONDS = 180
 MIN_STEPS = 4
 MAX_STEPS = 6
+MAX_SHOWN_WORDS = 40  # cap on what_is_shown, so each step shows one main thing
+WORDS_PER_SECOND = 2.5  # speaking rate: narration words must fit in target_seconds
 STATUS = "not built yet"
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "storyline.md")
 CHECKLIST_PATH = os.path.join(REPO_DIR, "prompts", "review-checklist.md")
 COMBINE_PATH = os.path.join(REPO_DIR, "prompts", "combine.md")
+CLAIM_CHECK_PATH = os.path.join(REPO_DIR, "prompts", "claim-check.md")
 DEFAULT_STRUCTURES_PATH = os.path.join(REPO_DIR, "prompts", "structures.md")
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "storylines"))
 
@@ -62,6 +65,46 @@ def build_schema(structure_names):
         "required": ["variants"],
         "additionalProperties": False,
     }
+
+
+CLAIM_FIELDS = ["variant", "location", "claim", "kind", "why"]
+CLAIMS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "variant": {"type": "string"},
+                    "location": {"type": "string"},
+                    "claim": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["credit", "date", "feature", "number", "other"]},
+                    "why": {"type": "string"},
+                },
+                "required": CLAIM_FIELDS,
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["claims"],
+    "additionalProperties": False,
+}
+
+
+def call_spark(client, prompt, name, schema):
+    # One Spark call with a strict JSON schema; prints token usage.
+    response = client.responses.create(
+        model=MODEL,
+        input=prompt,
+        max_output_tokens=MAX_OUTPUT_TOKENS,  # reasoning tokens count toward this
+        text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
+    )
+    usage = response.usage
+    print(f"Tokens ({name}): input={usage.input_tokens} output={usage.output_tokens} total={usage.total_tokens}")
+    if response.status != "completed":
+        print(f"Response status: {response.status} (the reply may be cut off)")
+    return response
 
 
 def read_text(path):
@@ -111,6 +154,13 @@ def check_variant(variant, rules_text):
         if not isinstance(step["target_seconds"], int):
             return f"step {i} target_seconds is not a whole number"
         total += step["target_seconds"]
+        shown_words = len(step["what_is_shown"].split())
+        if shown_words > MAX_SHOWN_WORDS:
+            return f"step {i} what_is_shown has {shown_words} words, more than {MAX_SHOWN_WORDS} (crowded step)"
+        narration_words = len(step["narration"].split())
+        max_narration = int(step["target_seconds"] * WORDS_PER_SECOND)
+        if narration_words > max_narration:
+            return f"step {i} narration has {narration_words} words, more than {max_narration} fit in {step['target_seconds']} s"
         criteria = step["judging_criteria"]
         if not isinstance(criteria, list) or not criteria:
             return f"step {i} judging_criteria must be a non-empty list"
@@ -175,6 +225,19 @@ def render_markdown(data, idea_path, rules_path, checklist):
     return "\n".join(lines) + "\n"
 
 
+def render_claims(claims, storyline_path, idea_path):
+    lines = [
+        "# Claim check",
+        "",
+        f"{len(claims)} claims in `{storyline_path}` that `{idea_path}` doesn't state, found by {MODEL}.",
+        "This is a report, not a gate.",
+        "",
+    ]
+    for c in claims:
+        lines.append(f"- **{c['variant']}, {c['location']}** ({c['kind']}): {c['claim']}. {c['why']}")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Draft demo storyline variants with Muse Spark.")
     parser.add_argument("idea", help="path to the idea file")
@@ -183,6 +246,7 @@ def main():
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="where to write the storylines")
     parser.add_argument("--pick", nargs="+", metavar="NAME", help="use only these structures, by name")
     parser.add_argument("--combine", action="store_true", help="draft one hybrid: the first picked structure is the spine")
+    parser.add_argument("--claim-check", action="store_true", help="after a passing draft, list claims IDEA doesn't state")
     args = parser.parse_args()
 
     load_env_file()
@@ -207,10 +271,13 @@ def main():
 
     # The only things sent to Meta: the prompt with the three files pasted in,
     # only the chosen structures, and in combine mode the combine instructions.
+    idea_text = read_text(args.idea)
     prompt = read_text(PROMPT_PATH)
-    prompt = prompt.replace("{{IDEA}}", read_text(args.idea))
+    prompt = prompt.replace("{{IDEA}}", idea_text)
     prompt = prompt.replace("{{RULES}}", rules_text)
     prompt = prompt.replace("{{STRUCTURES}}", structures_text)
+    prompt = prompt.replace("{{MAX_SHOWN_WORDS}}", str(MAX_SHOWN_WORDS))
+    prompt = prompt.replace("{{WORDS_PER_SECOND}}", str(WORDS_PER_SECOND))
 
     if args.combine:
         expected_names = ["Hybrid: " + " + ".join(chosen)]
@@ -224,24 +291,7 @@ def main():
 
     # No silent SDK retries (each would be another paid call), and a long timeout for 6 variants.
     client = OpenAI(base_url=BASE_URL, api_key=api_key, max_retries=0, timeout=1200)
-    response = client.responses.create(
-        model=MODEL,
-        input=prompt,
-        max_output_tokens=MAX_OUTPUT_TOKENS,  # reasoning tokens count toward this
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "storylines",
-                "schema": build_schema(expected_names),
-                "strict": True,
-            }
-        },
-    )
-
-    usage = response.usage
-    print(f"Tokens: input={usage.input_tokens} output={usage.output_tokens} total={usage.total_tokens}")
-    if response.status != "completed":
-        print(f"Response status: {response.status} (the reply may be cut off)")
+    response = call_spark(client, prompt, "storylines", build_schema(expected_names))
 
     os.makedirs(args.out_dir, exist_ok=True)
     prefix = "hybrid" if args.combine else "storylines"
@@ -264,6 +314,25 @@ def main():
         f.write(render_markdown(data, args.idea, args.rules, read_text(CHECKLIST_PATH)))
     print(f"Wrote {base}.json")
     print(f"Wrote {base}.md")
+
+    if not args.claim_check:
+        return
+    # Second call sends only the claim-check prompt, IDEA and the drafted variants.
+    claim_prompt = read_text(CLAIM_CHECK_PATH)
+    claim_prompt = claim_prompt.replace("{{IDEA}}", idea_text)
+    claim_prompt = claim_prompt.replace("{{STORYLINE}}", json.dumps(data, indent=2, ensure_ascii=False))
+    response = call_spark(client, claim_prompt, "claims", CLAIMS_SCHEMA)
+    reply = response.output_text
+    try:
+        claims = json.loads(reply)["claims"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        with open(base + "-claims-raw.txt", "w", encoding="utf-8") as f:
+            f.write(reply)
+        sys.exit(f"Claim check reply could not be read ({e}). Raw reply saved to {base}-claims-raw.txt")
+    with open(base + "-claims.md", "w", encoding="utf-8") as f:
+        f.write(render_claims(claims, base + ".md", args.idea))
+    print(f"Claim check: {len(claims)} claims IDEA doesn't state")
+    print(f"Wrote {base}-claims.md")
 
 
 if __name__ == "__main__":

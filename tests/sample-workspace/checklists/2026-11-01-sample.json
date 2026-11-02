@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "number": 1,
+      "title": "Day-one plan",
+      "status": "works",
+      "expected_end_state": "Open the web app \u2192 the storyline shows with every step marked not built yet",
+      "evidence": [
+        "Storyline page loads and shows 4 steps"
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Progress from docs",
+      "status": "partly works",
+      "expected_end_state": "Press Update progress \u2192 the board shows each step with a status",
+      "evidence": [
+        "Checklist JSON is written but the button is not wired"
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Secrets boxed out",
+      "status": "flaky",
+      "expected_end_state": "Run redaction on the planted key \u2192 a solid box covers it and a leak report lists it",
+      "evidence": [
+        "Caught the key in 3 of 5 runs"
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Take check",
+      "status": "missing",
+      "expected_end_state": "Upload a take \u2192 the failed step shows with the frame where it broke",
+      "evidence": []
+    }
+  ],
+  "record_today": [
+    "Step 1: record the storyline page loading",
+    "Step 3: record the planted key being boxed out"
+  ],
+  "questions_for_builder": [
+    "Does step 2's Update progress button work from the browser yet?"
+  ],
+  "update_lines": [
+    "Day one plan works; progress from docs partly works; secrets flaky; take check not started."
+  ]
+}
