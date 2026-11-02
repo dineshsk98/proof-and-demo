@@ -55,7 +55,7 @@ button {
 button:disabled { opacity: 0.6; cursor: default; }
 
 .draft-line { padding-top: 0; padding-bottom: 12px; }
-#draft-status { margin: 0; font-size: 16px; color: var(--muted); }
+#draft-status { margin: 0; font-size: 16px; color: var(--muted); white-space: pre-line; }
 #draft-status.running { color: var(--accent); font-weight: 600; }
 #draft-status.failed { color: #b42318; font-weight: 600; }
 #draft-status.done { color: #1a7f37; font-weight: 600; }
@@ -150,7 +150,18 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 32px 64px; }
 /* Readiness board */
 .actions { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .actions .meta { margin: 0; }
-button.placeholder { background: var(--card); color: var(--muted); border: 2px dashed var(--line); }
+button.secondary { background: var(--card); color: var(--accent); }
+button.stop { background: #b42318; border-color: #b42318; }
+.panels { margin-bottom: 8px; }
+.panels .actions { margin-bottom: 4px; }
+.job-status { margin-top: 10px; font-size: 16px; color: var(--muted); white-space: pre-line; }
+.job-status:empty { display: none; }
+.job-status.running { color: var(--accent); font-weight: 600; }
+.job-status.done { color: #1a7f37; }
+.job-status.failed { color: #b42318; font-weight: 600; }
+.job-status.empty { color: #7a4b00; font-weight: 600; }
+.transcript { margin: 10px 0 0; padding: 10px 16px; border-left: 4px solid var(--accent); background: var(--page); font-style: italic; }
+.transcript[hidden] { display: none; }
 .counts { display: flex; gap: 14px; margin: 16px 0 4px; }
 .count {
   flex: 1;

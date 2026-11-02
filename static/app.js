@@ -115,22 +115,14 @@ function renderReadiness() {
   const root = document.getElementById("readiness-view");
   root.replaceChildren();
 
-  // Placeholders only. Voice notes (branch B) and the progress update (branch D) get wired in a later slice.
-  const actions = el("div", "actions");
-  for (const label of ["Upload voice note", "Update progress"]) {
-    const button = el("button", "placeholder", label);
-    button.type = "button";
-    button.disabled = true;
-    button.title = "Not wired yet";
-    actions.append(button);
-  }
-  actions.append(el("span", "meta", "Not wired yet: coming in a later slice."));
+  const actions = actionPanels();
 
   if (checklist) {
     renderChecklist(root, actions);
   } else {
     renderNotBuilt(root, actions);
   }
+  showJobs(); // the panels were just rebuilt, so fill them in again
 }
 
 // No checklist yet: every step of the picked storyline variant is "not built yet".
@@ -236,52 +228,184 @@ function listCard(title, items) {
   return card;
 }
 
-// ---------- Draft button ----------
+// ---------- Jobs: draft, voice note, update progress ----------
 
-function showDraftStatus(status) {
-  draftStatus.className = status.state;
-  if (status.state === "running") {
-    draftStatus.textContent = `Running… ${status.seconds} s. This is a live Muse Spark call on ${status.idea} and ${status.judging}; it can take several minutes.`;
-  } else if (status.state === "done" || status.state === "failed") {
-    const tokens = status.tokens
-      ? `Tokens: input ${status.tokens.input.toLocaleString()} · output ${status.tokens.output.toLocaleString()} · total ${status.tokens.total.toLocaleString()}.`
-      : "No token usage reported.";
-    const verdict = status.state === "done" ? "Draft finished" : "Draft failed";
-    draftStatus.textContent = `${verdict} in ${status.seconds} s. ${tokens} ${status.state === "failed" ? status.message : ""}`;
-  }
+let jobs = { draft: { state: "idle" }, voice: { state: "idle" }, update: { state: "idle" } }; // latest from /api/jobs
+let notices = { draft: "", voice: "", update: "" }; // why a job could not even start (a 400 or 409 from the server)
+let recorder = null; // a MediaRecorder while a voice note is being recorded
+let recordingTimer = null;
+let recordingStart = 0;
+
+function makeButton(id, label, className, onClick) {
+  const button = el("button", className, label);
+  button.id = id;
+  button.type = "button";
+  button.addEventListener("click", onClick);
+  return button;
 }
 
-async function pollDraft() {
-  let status;
+function withId(node, id) {
+  node.id = id;
+  return node;
+}
+
+// The two panels at the top of the readiness board. They are rebuilt with the page, so showJobs() fills them in.
+function actionPanels() {
+  const fileInput = el("input");
+  fileInput.type = "file";
+  fileInput.accept = "audio/*,.m4a,.mp3,.wav,.webm,.ogg";
+  fileInput.hidden = true;
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (file) postJob("voice", "/api/voice?name=" + encodeURIComponent(file.name), file);
+    fileInput.value = ""; // so picking the same file again still fires
+  });
+
+  const voice = el("div", "card");
+  const voiceButtons = el("div", "actions");
+  voiceButtons.append(
+    makeButton("record-button", "Record", null, startRecording),
+    makeButton("stop-button", "Stop", "stop", stopRecording),
+    makeButton("upload-button", "Upload audio file", "secondary", () => fileInput.click()),
+    fileInput,
+  );
+  voice.append(
+    el("h3", null, "Voice note"),
+    voiceButtons,
+    withId(el("p", "job-status"), "voice-status"),
+    withId(el("blockquote", "transcript"), "transcript"),
+    el("p", "meta", "The audio goes to Meta's Voice Transcribe as recorded. Update progress redacts the transcript locally before it is read."),
+  );
+
+  const update = el("div", "card");
+  const updateButtons = el("div", "actions");
+  updateButtons.append(makeButton("update-button", "Update progress", null, startUpdate));
+  update.append(
+    el("h3", null, "Progress update"),
+    updateButtons,
+    withId(el("p", "meta"), "update-target"),
+    withId(el("p", "job-status"), "update-status"),
+    el("p", "meta", "Reads the session docs and voice-note transcripts, redacts them locally, then makes one Muse Spark call."),
+  );
+
+  const panels = el("div", "two-columns panels");
+  panels.append(voice, update);
+  return panels;
+}
+
+function formatTime(milliseconds) {
+  const seconds = Math.floor(milliseconds / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+// What a job's status line says: its headline, then everything the script printed, then any error.
+function jobText(job, runningNote) {
+  if (job.state === "idle") return "";
+  if (job.state === "running") return `Running… ${job.seconds} s. ${runningNote}`;
+  const headline = job.state === "done" ? `Finished in ${job.seconds} s.` : `Failed after ${job.seconds} s.`;
+  return [headline, ...job.lines, job.message].filter(Boolean).join("\n");
+}
+
+// Redraws every job's button and status from the latest jobs, notices and recording state.
+function showJobs() {
+  const { draft, voice, update } = jobs;
+
+  draftButton.disabled = draft.state === "running";
+  const draftText = notices.draft || jobText(draft, `Live Muse Spark call on ${draft.idea} and ${draft.judging}; it can take several minutes.`);
+  if (draftText) {
+    draftStatus.className = notices.draft ? "failed" : draft.state;
+    draftStatus.textContent = draftText;
+  }
+
+  const voiceStatus = document.getElementById("voice-status");
+  if (!voiceStatus) return; // the readiness page isn't drawn yet
+  const voiceBusy = voice.state === "running" || recorder !== null;
+  document.getElementById("record-button").disabled = voiceBusy;
+  document.getElementById("upload-button").disabled = voiceBusy;
+  document.getElementById("stop-button").hidden = recorder === null;
+  let voiceText = notices.voice || jobText(voice, `Converting and transcribing ${voice.audio}.`);
+  let voiceClass = notices.voice ? "failed" : voice.state;
+  if (recorder) {
+    voiceText = `Recording… ${formatTime(Date.now() - recordingStart)}`;
+    voiceClass = "running";
+  } else if (voice.state === "failed" && voice.empty && !notices.voice) {
+    voiceText = `Empty transcript after ${voice.seconds} s. Voice Transcribe found no speech, so nothing was saved. Try again, closer to the mic.`;
+    voiceClass = "empty";
+  }
+  voiceStatus.className = "job-status " + voiceClass;
+  voiceStatus.textContent = voiceText;
+  const transcript = document.getElementById("transcript");
+  transcript.hidden = !(voice.state === "done" && voice.transcript);
+  transcript.textContent = voice.transcript || "";
+
+  document.getElementById("update-button").disabled = update.state === "running" || !storyline;
+  document.getElementById("update-target").textContent = storyline
+    ? `Uses variant ${variantIndex + 1} of ${storyline.file}, the one shown on the Storyline page.`
+    : "Needs a storyline first.";
+  const updateStatus = document.getElementById("update-status");
+  updateStatus.className = "job-status " + (notices.update ? "failed" : update.state);
+  updateStatus.textContent = notices.update || jobText(update, `Redacting locally, then one Muse Spark call on variant ${update.variant} of ${update.storyline}.`);
+}
+
+// Starts a job on the server. A refusal (400, 409) becomes a notice on that job's status line.
+async function postJob(kind, url, body) {
+  notices[kind] = "";
+  const response = await fetch(url, { method: "POST", body });
+  const reply = await response.json();
+  if (!response.ok) notices[kind] = reply.error || JSON.stringify(reply.detail);
+  showJobs();
+  pollJobs();
+}
+
+async function pollJobs() {
+  let latest;
   try {
-    status = await getJson("/api/draft");
+    latest = await getJson("/api/jobs");
   } catch (error) {
     draftStatus.textContent = "Could not reach the server.";
-    draftButton.disabled = false;
     return;
   }
-  showDraftStatus(status);
-  if (status.state === "running") {
-    draftButton.disabled = true;
-    setTimeout(pollDraft, 2000);
-    return;
+  const before = jobs;
+  jobs = latest;
+  showJobs();
+  // A finished draft or update wrote a new file, which is the newest, so reloading shows it.
+  for (const kind of ["draft", "update"]) {
+    if (before[kind].state === "running" && latest[kind].state === "done") await loadData();
   }
-  draftButton.disabled = false;
-  if (status.state === "done") await loadData(); // the new file is the newest, so it shows up
 }
 
-async function startDraft() {
-  draftButton.disabled = true;
-  draftStatus.className = "running";
-  draftStatus.textContent = "Starting…";
-  const reply = await getJson("/api/draft", { method: "POST" });
-  if (reply.error) {
-    draftStatus.className = "failed";
-    draftStatus.textContent = reply.error;
-    draftButton.disabled = false;
-    return;
-  }
-  pollDraft();
+function startRecording() {
+  notices.voice = "";
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(
+    (stream) => {
+      const chunks = [];
+      recorder = new MediaRecorder(stream); // Chrome and Edge record webm/opus
+      recorder.addEventListener("dataavailable", (event) => chunks.push(event.data));
+      recorder.addEventListener("stop", () => {
+        stream.getTracks().forEach((track) => track.stop()); // gives the microphone back
+        clearInterval(recordingTimer);
+        const blob = new Blob(chunks, { type: recorder.mimeType });
+        recorder = null;
+        postJob("voice", "/api/voice?name=recording.webm", blob);
+      });
+      recordingStart = Date.now();
+      recordingTimer = setInterval(showJobs, 500); // keeps the visible timer ticking
+      recorder.start();
+      showJobs();
+    },
+    (error) => {
+      notices.voice = "Could not use the microphone: " + error.message;
+      showJobs();
+    },
+  );
+}
+
+function stopRecording() {
+  if (recorder) recorder.stop();
+}
+
+function startUpdate() {
+  postJob("update", `/api/update?file=${encodeURIComponent(storyline.file)}&variant=${variantIndex + 1}`);
 }
 
 // ---------- Start-up ----------
@@ -301,8 +425,9 @@ async function loadData() {
   renderReadiness();
 }
 
-draftButton.addEventListener("click", startDraft);
+draftButton.addEventListener("click", () => postJob("draft", "/api/draft"));
 window.addEventListener("hashchange", showPage);
 showPage();
 loadData();
-pollDraft(); // picks up a draft that is already running, or shows the last result
+pollJobs(); // picks up a job that is already running, or shows the last result
+setInterval(pollJobs, 2000);

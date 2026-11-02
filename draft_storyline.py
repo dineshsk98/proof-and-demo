@@ -7,6 +7,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from env import load_env_file
+from redact import redact_text
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
@@ -124,6 +125,23 @@ def parse_structures(text):
         elif name is not None:
             structures[name].append(line)
     return {name: "\n".join(lines).strip() for name, lines in structures.items()}
+
+
+def redact_inputs(idea_text, rules_text):
+    # Both files are redacted locally before any call, and every check and the claim
+    # check use the redacted text, so they see what the model saw.
+    # The summary line has the same shape as the one in stage1_update.py.
+    idea_text, idea_findings = redact_text(idea_text)
+    rules_text, rules_findings = redact_text(rules_text)
+    kinds = {}
+    for finding in idea_findings + rules_findings:
+        kinds[finding["kind"]] = kinds.get(finding["kind"], 0) + 1
+    if kinds:
+        summary = ", ".join(f"{kind} {count}" for kind, count in sorted(kinds.items()))
+        print(f"Redacted {sum(kinds.values())} findings before the call: {summary}")
+    else:
+        print("Redacted 0 findings before the call.")
+    return idea_text, rules_text
 
 
 def normalize(text):
@@ -254,7 +272,7 @@ def main():
     if not api_key:
         sys.exit("MODEL_API_KEY is missing. Copy .env.example to .env and put your key in it.")
 
-    rules_text = read_text(args.rules)
+    idea_text, rules_text = redact_inputs(read_text(args.idea), read_text(args.rules))
     structures = parse_structures(read_text(args.structures))
     if not structures:
         sys.exit(f'No structures found in {args.structures}. Each one needs a "## Name" heading.')
@@ -269,9 +287,9 @@ def main():
         sys.exit("--combine needs --pick with a spine and at least one more structure.")
     structures_text = "\n\n".join(f"## {name}\n{structures[name]}" for name in chosen)
 
-    # The only things sent to Meta: the prompt with the three files pasted in,
-    # only the chosen structures, and in combine mode the combine instructions.
-    idea_text = read_text(args.idea)
+    # The only things sent to Meta: the prompt with the three files pasted in
+    # (the idea and rules already redacted), only the chosen structures, and in
+    # combine mode the combine instructions.
     prompt = read_text(PROMPT_PATH)
     prompt = prompt.replace("{{IDEA}}", idea_text)
     prompt = prompt.replace("{{RULES}}", rules_text)
