@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "number": 1,
+      "title": "Draft the storyline",
+      "status": "works",
+      "expected_end_state": "Click Draft storyline → a storyline appears listing the demo steps, each marked not built yet",
+      "evidence": []
+    },
+    {
+      "number": 2,
+      "title": "Readiness board",
+      "status": "works",
+      "expected_end_state": "Open the Readiness tab → a board appears showing each step's status (works, partly works, missing)",
+      "evidence": []
+    },
+    {
+      "number": 3,
+      "title": "Check a take",
+      "status": "partly works",
+      "expected_end_state": "Click Check take → a proof frame appears with a green Pass label",
+      "evidence": []
+    }
+  ],
+  "record_today": [],
+  "questions_for_builder": [],
+  "update_lines": []
+}
