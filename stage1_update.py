@@ -18,7 +18,7 @@ except ModuleNotFoundError as e:
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
-MAX_OUTPUT_TOKENS = 16000  # one checklist is a few thousand tokens, plus reasoning
+MAX_OUTPUT_TOKENS = 32000  # one checklist is a few thousand tokens, plus reasoning
 STATUSES = ["works", "partly works", "flaky", "missing"]  # board order: most ready first
 NEEDS_EVIDENCE = ["works", "partly works", "flaky"]
 
