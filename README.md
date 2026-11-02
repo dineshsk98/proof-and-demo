@@ -5,3 +5,5 @@ A demo companion for solo builders, built for the Meta Global AI Developer Hacka
 Setup: create a venv, `pip install -r requirements.txt`, copy `.env.example` to `.env` and fill in `MODEL_API_KEY`, then run `python smoke_test.py`.
 
 Draft storylines: `python draft_storyline.py <idea file> <rules file>`. It writes one variant per demo structure in `prompts/structures.md` (each a `## Name` heading plus a description). The prompt is in `prompts/storyline.md`, and the review checklist added under each variant is in `prompts/review-checklist.md`. Use `--pick <name> ...` to draft only some structures, and add `--combine` to draft one hybrid: the first picked structure is the spine, and the others contribute beats (instructions in `prompts/combine.md`).
+
+Voice notes: `python voice.py <audio file>` turns one voice note (m4a, mp3, webm, wav) into text with Voice Transcribe and writes `workspace/voice-notes/<timestamp>.txt` plus a `.json` sidecar with the turns. It needs ffmpeg on PATH (`winget install Gyan.FFmpeg`).
