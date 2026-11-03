@@ -32,7 +32,6 @@ MERGE_S = 1.0  # changes closer than this are one change (a page loading in piec
 WAIT_MIN_S = 4.0  # a quiet stretch at least this long that ends in a change is a wait
 SETTLE_S = 1.0  # the frame sent for a change is taken this long after it, so the screen has settled
 MAX_FRAMES = 10  # frames sent per take; each takes ~17 s to redact on CPU
-PROOF_HOLD_S = 2.0  # a step's stretch runs this long past its proof or break frame, if the screen stays put
 
 VOTES = 2  # independent checks per take; "unsure" when they disagree (spec §7)
 SEND_WIDTH = 1280  # frames are redacted at full size, then shrunk to this width to send
@@ -306,34 +305,41 @@ def check_take(client, take_path, steps, run_dir, frames_only=False):
 
     frame_times = {f["label"]: f["time_s"] for f in frames}
     frame_paths = {f["label"]: f["sent_path"] for f in frames}
-    take["steps"] = []
-    prev_end = 0.0
+    # Decide every step first: a step's stretch needs to know where the next step's evidence starts.
+    decided = []
     for step in steps:
         votes = votes_by_step[step["number"]]
         verdict, proof, broke = decide(votes, frame_times)
         shown = [label for label in (proof, broke) if label]
-        if shown:
-            # The stretch runs from the end of the previous step to just past the frame that decided it,
-            # but never into the next change.
-            t = min(frame_times[label] for label in shown)
-            next_change = min([c for c in changes if c > t], default=duration)
-            start_s = prev_end if prev_end <= t else 0.0
-            end_s = min(t + PROOF_HOLD_S, next_change, duration)
-        else:
+        decided.append({"step": step, "votes": votes, "verdict": verdict, "proof": proof, "broke": broke,
+                        "t": min(frame_times[label] for label in shown) if shown else None})
+
+    take["steps"] = []
+    prev_end = 0.0
+    for i, d in enumerate(decided):
+        step, t = d["step"], d["t"]
+        if t is None:
             start_s, end_s = 0.0, duration  # no usable frame: both votes failed their checks
+        else:
+            # The stretch runs from the end of the previous step to where the next step's evidence starts
+            # (the earliest later frame that decided a following step), or to the end of the take.
+            # Stopping at the next screen change cut a step to half a second when a small change
+            # happened while its end state was still on screen.
+            start_s = prev_end if prev_end <= t else 0.0
+            end_s = min([e["t"] for e in decided[i + 1:] if e["t"] is not None and e["t"] > t], default=duration)
         prev_end = end_s
         take["steps"].append({
             "number": step["number"],
             "expected_end_state": step["expected_end_state"],
-            "verdict": verdict,
+            "verdict": d["verdict"],
             "start_s": round(start_s, 2),
             "end_s": round(end_s, 2),
-            "proof_frame": frame_paths[proof] if proof else None,
-            "break_frame": frame_paths[broke] if broke else None,
-            "votes": votes,
+            "proof_frame": frame_paths[d["proof"]] if d["proof"] else None,
+            "break_frame": frame_paths[d["broke"]] if d["broke"] else None,
+            "votes": d["votes"],
         })
-        print(f"  step {step['number']}: {verdict} " +
-              ", ".join(f"{v['verdict']}@{'+'.join(v['frames']) or v['frame']}" for v in votes))
+        print(f"  step {step['number']}: {d['verdict']} " +
+              ", ".join(f"{v['verdict']}@{'+'.join(v['frames']) or v['frame']}" for v in d["votes"]))
     return take, usages
 
 

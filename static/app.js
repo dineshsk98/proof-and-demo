@@ -1,6 +1,9 @@
-// State shared by both pages. Each page redraws itself from it.
+// State shared by the pages. Each page redraws itself from it.
 let storyline = null; // {file, modified, data} from /api/storyline, or null
-let checklist = null; // same shape from /api/checklist, or null
+let checklist = null; // same shape from /api/checklist for the variant shown, or null
+let files = null; // what /api/files lists: checklists, takes, checks, narrations, assets
+let latestCheck = null; // same shape from /api/check, or null
+let latestCut = null; // same shape from /api/cut, or null
 let variantIndex = 0; // which storyline variant is picked
 
 // The order the readiness board shows its groups in.
@@ -64,10 +67,12 @@ function renderStoryline() {
     const button = el("button", "variant" + (i === variantIndex ? " selected" : ""));
     button.type = "button";
     button.append(el("strong", null, `${i + 1}. ${v.structure}`), el("span", null, `${totalSeconds(v)} s`));
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       variantIndex = i;
       renderStoryline();
+      await loadChecklist(); // the board shows the checklist made for the variant on screen
       renderReadiness();
+      renderCut(); // its narrate button names the variant too
     });
     picker.append(button);
   });
@@ -133,7 +138,7 @@ function renderNotBuilt(root, actions) {
     return;
   }
   const variant = storyline.data.variants[Math.min(variantIndex, storyline.data.variants.length - 1)];
-  root.append(pageHeading("Readiness board", `No checklist yet. Showing the steps of variant ${variantIndex + 1} (${variant.structure}) from ${storyline.file}.`));
+  root.append(pageHeading("Readiness board", `No checklist for variant ${variantIndex + 1} (${variant.structure}) of ${storyline.file} yet. Press Update progress to make one. Until then its steps are not built yet.`));
   root.append(actions);
 
   root.append(groupHeading("not built yet", variant.steps.length));
@@ -230,8 +235,9 @@ function listCard(title, items) {
 
 // ---------- Jobs: draft, voice note, update progress ----------
 
-let jobs = { draft: { state: "idle" }, voice: { state: "idle" }, update: { state: "idle" } }; // latest from /api/jobs
-let notices = { draft: "", voice: "", update: "" }; // why a job could not even start (a 400 or 409 from the server)
+const KINDS = ["draft", "voice", "update", "check", "cut", "assets", "narrate"];
+let jobs = Object.fromEntries(KINDS.map((kind) => [kind, { state: "idle", lines: [] }])); // latest from /api/jobs
+let notices = Object.fromEntries(KINDS.map((kind) => [kind, ""])); // why a job could not even start (a 400 or 409 from the server)
 let recorder = null; // a MediaRecorder while a voice note is being recorded
 let recordingTimer = null;
 let recordingStart = 0;
@@ -301,7 +307,8 @@ function formatTime(milliseconds) {
 // What a job's status line says: its headline, then everything the script printed, then any error.
 function jobText(job, runningNote) {
   if (job.state === "idle") return "";
-  if (job.state === "running") return `Running… ${job.seconds} s. ${runningNote}`;
+  // While it runs, the last lines the script printed show its progress.
+  if (job.state === "running") return [`Running… ${job.seconds} s. ${runningNote}`, ...job.lines.slice(-2)].join("\n");
   const headline = job.state === "done" ? `Finished in ${job.seconds} s.` : `Failed after ${job.seconds} s.`;
   return [headline, ...job.lines, job.message].filter(Boolean).join("\n");
 }
@@ -345,6 +352,9 @@ function showJobs() {
   const updateStatus = document.getElementById("update-status");
   updateStatus.className = "job-status " + (notices.update ? "failed" : update.state);
   updateStatus.textContent = notices.update || jobText(update, `Redacting locally, then one Muse Spark call on variant ${update.variant} of ${update.storyline}.`);
+
+  showTakesJobs();
+  showCutJobs();
 }
 
 // Starts a job on the server. A refusal (400, 409) becomes a notice on that job's status line.
@@ -368,8 +378,8 @@ async function pollJobs() {
   const before = jobs;
   jobs = latest;
   showJobs();
-  // A finished draft or update wrote a new file, which is the newest, so reloading shows it.
-  for (const kind of ["draft", "update"]) {
+  // A finished job wrote a new file, which is the newest, so reloading shows it.
+  for (const kind of KINDS) {
     if (before[kind].state === "running" && latest[kind].state === "done") await loadData();
   }
 }
@@ -410,19 +420,32 @@ function startUpdate() {
 
 // ---------- Start-up ----------
 
+const PAGES = ["storyline", "readiness", "takes", "cut"];
+
 function showPage() {
-  const page = location.hash === "#readiness" ? "readiness" : "storyline";
-  for (const name of ["storyline", "readiness"]) {
+  const page = PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "storyline";
+  for (const name of PAGES) {
     document.getElementById(name + "-view").hidden = name !== page;
     document.getElementById("nav-" + name).classList.toggle("active", name === page);
   }
 }
 
+// The checklist made for the storyline and variant on screen (the newest one if there is no storyline).
+async function loadChecklist() {
+  const which = storyline ? `?file=${encodeURIComponent(storyline.file)}&variant=${variantIndex + 1}` : "";
+  checklist = await getJson("/api/checklist" + which);
+}
+
 async function loadData() {
   storyline = await getJson("/api/storyline");
-  checklist = await getJson("/api/checklist");
+  await loadChecklist();
+  files = await getJson("/api/files");
+  latestCheck = await getJson("/api/check");
+  latestCut = await getJson("/api/cut");
   renderStoryline();
   renderReadiness();
+  renderTakes();
+  renderCut();
 }
 
 draftButton.addEventListener("click", () => postJob("draft", "/api/draft"));

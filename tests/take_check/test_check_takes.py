@@ -116,9 +116,12 @@ def test_agreeing_votes():
     assert s1["proof_frame"].endswith("F3.png") and s1["break_frame"] is None, s1
     assert s3["proof_frame"] is None and s3["break_frame"].endswith("F5.png"), s3
     assert os.path.exists(s1["proof_frame"]) and os.path.exists(s3["break_frame"])
-    # Stretches follow each other and stop before the next change.
-    assert s1["start_s"] == 0.0 and near(s1["end_s"], 18.0), s1
-    assert s2["start_s"] == s1["end_s"] and near(s2["end_s"], 21.0), s2
+    # Stretches follow each other: each runs to the frame that decided the next step (F3 -> F4 -> F5),
+    # and the last one (step 3, failed at F5) runs to the end of the take.
+    time_of = {f["label"]: f["time_s"] for f in take["frames"]}
+    assert s1["start_s"] == 0.0 and near(s1["end_s"], time_of["F4"]), s1
+    assert s2["start_s"] == s1["end_s"] and near(s2["end_s"], time_of["F5"]), s2
+    assert s3["start_s"] == s2["end_s"] and near(s3["end_s"], take["duration_s"]), s3
     assert len(s1["votes"]) == check_takes.VOTES
 
     # Only redacted frames are sent, and no raw frame is left on disk.

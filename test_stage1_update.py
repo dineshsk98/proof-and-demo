@@ -153,7 +153,11 @@ def test_good_reply():
     [json_path] = glob.glob(os.path.join(out_dir, "*.json"))
     [md_path] = glob.glob(os.path.join(out_dir, "*.md"))
     with open(json_path, encoding="utf-8") as f:
-        assert json.load(f) == GOOD
+        written = json.load(f)
+    # The checklist also says which storyline and variant it is for.
+    source = written.pop("source")
+    assert source["storyline"].endswith("storyline.json") and source["variant"] == 1, source
+    assert written == GOOD
     board = stage1_update.read_text(md_path)
     assert "**Steps:** works 1 · partly works 0 · flaky 1 · missing 1" in board, board
     assert "| 1 | Upload a take | works |" in board
@@ -182,6 +186,29 @@ def test_variant_2():
     board = stage1_update.read_text(glob.glob(os.path.join(out_dir, "*.md"))[0])
     assert "## Record today\n\n- None." in board
     print("ok  --variant 2 uses the second variant; empty lists show as None.")
+
+
+def test_only_newest_progress_is_read():
+    tmp = tempfile.mkdtemp()
+    sessions = os.path.join(tmp, "sessions")
+    voice = os.path.join(tmp, "voice-notes")
+    os.makedirs(sessions)
+    os.makedirs(voice)
+    # Seven docs and seven notes, the file number matching how recently each was changed.
+    for folder, extension, limit in [(sessions, ".md", stage1_update.MAX_SESSION_DOCS),
+                                     (voice, ".txt", stage1_update.MAX_VOICE_NOTES)]:
+        for i in range(7):
+            path = os.path.join(folder, f"file{i}{extension}")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"text of file {i}")
+            os.utime(path, (1000 + i, 1000 + i))
+    docs, left_out = stage1_update.load_progress(sessions, voice)
+    labels = [label for label, _ in docs]
+    wanted_docs = [f"sessions/file{i}.md" for i in range(7 - stage1_update.MAX_SESSION_DOCS, 7)]
+    wanted_notes = [f"voice-notes/file{i}.txt" for i in range(7 - stage1_update.MAX_VOICE_NOTES, 7)]
+    assert labels == wanted_docs + wanted_notes, labels
+    assert left_out == 14 - len(labels), left_out
+    print(f"ok  only the newest {stage1_update.MAX_SESSION_DOCS} docs and {stage1_update.MAX_VOICE_NOTES} voice notes are read")
 
 
 def test_stops_before_call():
@@ -247,6 +274,7 @@ def test_bad_replies():
 if __name__ == "__main__":
     test_good_reply()
     test_variant_2()
+    test_only_newest_progress_is_read()
     test_stops_before_call()
     test_missing_redact_module()
     test_bad_replies()
