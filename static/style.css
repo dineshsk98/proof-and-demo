@@ -174,3 +174,38 @@ button.stop { background: #b42318; border-color: #b42318; }
   gap: 14px;
 }
 .count strong { font-size: 40px; line-height: 1; }
+
+/* Take verdicts */
+.status-pass { background: #dcfae6; color: #05603a; }
+.status-fail { background: #fee4e2; color: #b42318; }
+.status-unsure, .status-invalid { background: #fef0c7; color: #7a4b00; }
+
+/* Takes and Final cut pages */
+.form-row { display: grid; grid-template-columns: 190px 1fr; align-items: center; gap: 8px; margin-bottom: 10px; }
+.form-row .label { min-width: 0; }
+input[type=text], select {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  max-width: 720px;
+}
+.checks { display: flex; flex-direction: column; gap: 6px; }
+.check-row { display: block; margin-bottom: 6px; }
+.verdict-row { display: flex; gap: 24px; padding: 14px 0; border-top: 1px solid var(--line); }
+.verdict-row:first-of-type { border-top: 0; }
+.verdict-row img.frame { width: 420px; border: 1px solid var(--line); border-radius: 8px; display: block; }
+.verdict-body { flex: 1; }
+.step-end { font-weight: 600; }
+.vote { font-size: 15px; color: var(--muted); margin-top: 4px; }
+.verdict-line { font-weight: 600; margin-top: 8px; }
+.verdict-line.good { color: #1a7f37; }
+.verdict-line.warn { color: #7a4b00; }
+.previews { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
+img.preview { height: 180px; border: 1px solid var(--line); border-radius: 8px; display: block; }
+.narrate { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+video.cut-video, img.proof-card { width: 100%; max-width: 1100px; border-radius: 8px; display: block; background: #000; }
+progress { width: 100%; max-width: 720px; height: 14px; margin-top: 10px; }
+progress[hidden] { display: none; }

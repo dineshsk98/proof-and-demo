@@ -21,6 +21,9 @@ BASE_URL = "https://api.meta.ai/v1"
 MAX_OUTPUT_TOKENS = 32000  # one checklist is a few thousand tokens, plus reasoning
 STATUSES = ["works", "partly works", "flaky", "missing"]  # board order: most ready first
 NEEDS_EVIDENCE = ["works", "partly works", "flaky"]
+# Only the newest progress is sent: all of it grew to 18k tokens and used up the output budget on reasoning.
+MAX_SESSION_DOCS = 5
+MAX_VOICE_NOTES = 5
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "stage1.md")
@@ -112,12 +115,19 @@ def check_checklist(data, planned_steps, progress_text):
     return None
 
 
+def newest(paths, limit):
+    # The `limit` most recently changed files, listed oldest first by file name.
+    return sorted(sorted(paths, key=os.path.getmtime)[-limit:])
+
+
 def load_progress(sessions_dir, voice_dir):
-    # Every session doc (*.md) and voice-note transcript (*.txt), oldest first by file name.
-    # Returns [(label, text)] with the raw text, not yet redacted.
-    paths = sorted(glob.glob(os.path.join(sessions_dir, "*.md")))
-    paths += sorted(glob.glob(os.path.join(voice_dir, "*.txt")))
-    return [(os.path.basename(os.path.dirname(p)) + "/" + os.path.basename(p), read_text(p)) for p in paths]
+    # The newest session docs (*.md) and voice-note transcripts (*.txt), docs first.
+    # Returns ([(label, text)], how many older files were left out), the text not yet redacted.
+    docs = glob.glob(os.path.join(sessions_dir, "*.md"))
+    notes = glob.glob(os.path.join(voice_dir, "*.txt"))
+    paths = newest(docs, MAX_SESSION_DOCS) + newest(notes, MAX_VOICE_NOTES)
+    left_out = len(docs) + len(notes) - len(paths)
+    return [(os.path.basename(os.path.dirname(p)) + "/" + os.path.basename(p), read_text(p)) for p in paths], left_out
 
 
 def format_storyline(planned_steps):
@@ -183,7 +193,7 @@ def main():
     variant = variants[args.variant - 1]
     planned_steps = variant["steps"]
 
-    docs = load_progress(args.sessions_dir, args.voice_dir)
+    docs, left_out = load_progress(args.sessions_dir, args.voice_dir)
     if not docs:
         sys.exit(f"No session docs in {args.sessions_dir} and no transcripts in {args.voice_dir}.")
     doc_count = sum(1 for label, _ in docs if label.endswith(".md"))
@@ -206,7 +216,8 @@ def main():
 
     # The only things sent to Meta: the prompt, the chosen variant's step numbers, titles
     # and what each should show, and the redacted session docs and transcripts.
-    print(f"Sending: variant {args.variant} ({len(planned_steps)} steps), {doc_count} session docs, {note_count} voice notes")
+    print(f"Sending: variant {args.variant} ({len(planned_steps)} steps), {doc_count} session docs, {note_count} voice notes"
+          + (f" (the newest ones; {left_out} older files left out)" if left_out else ""))
     prompt = read_text(PROMPT_PATH)
     prompt = prompt.replace("{{STORYLINE}}", format_storyline(planned_steps))
     prompt = prompt.replace("{{PROGRESS}}", progress_text)
@@ -246,6 +257,8 @@ def main():
             f.write(reply)
         sys.exit(f"Checklist failed checks: {error}. Raw reply saved to {base}-raw.txt")
 
+    # Which storyline and variant this checklist is for, so the web app can show it next to the right one.
+    data["source"] = {"storyline": os.path.abspath(args.storyline), "variant": args.variant}
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     with open(base + ".md", "w", encoding="utf-8") as f:
