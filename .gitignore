@@ -2,3 +2,5 @@
 .env
 __pycache__/
 tests/redaction/out/
+tests/final-cut/out/
+tests/final-cut/*.json
