@@ -14,7 +14,8 @@ from redact import redact_image  # noqa: E402
 
 # Checks a video made by cut_video.py from the synthetic takes (make_samples.py):
 # 1. format and duration match the cut log
-# 2. stills at every label, stitch, hold and redaction box, saved to workspace/screenshots/final-cut-*.png
+# 2. stills at every label, stitch, hold, trim, zoom, caption, the preview and every redaction box,
+#    saved to workspace/screenshots/<name>-*.png
 # 3. local OCR on the redaction stills finds no secret (the boxes really cover it)
 # 4. sync: every flash has its beep (except in muted, sped-up waits);
 #    with narration, every clip starts at its step and plays to the end, and the take audio under it
@@ -55,8 +56,10 @@ def falling_edges(values, threshold, times):
     return [round(float(times[i]), 3) for i in range(1, len(values)) if above[i - 1] and not above[i]]
 
 
-def audio_samples(video):
-    raw = run(["ffmpeg", "-v", "error", "-i", video, "-ac", "1", "-ar", "48000", "-f", "s16le", "-"], binary=True)
+def audio_samples(video, as_stereo_first=False):
+    # as_stereo_first: made stereo before the mix down to mono, the way cut_video.py normalises a mono take.
+    stereo = ["-af", "aformat=channel_layouts=stereo"] if as_stereo_first else []
+    raw = run(["ffmpeg", "-v", "error", "-i", video] + stereo + ["-ac", "1", "-ar", "48000", "-f", "s16le", "-"], binary=True)
     return np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768
 
 
@@ -98,6 +101,8 @@ def main():
     parser = argparse.ArgumentParser(description="Check a final cut made from the synthetic takes.")
     parser.add_argument("cut_log")
     parser.add_argument("--no-ocr", action="store_true", help="skip the OCR leak check (about 17 s per still)")
+    parser.add_argument("--no-sync", action="store_true", help="skip the sound checks (for real takes, which have no beeps)")
+    parser.add_argument("--name", default="final-cut", help="stills are saved as workspace/screenshots/<name>-<ts>-*.png")
     args = parser.parse_args()
     with open(args.cut_log, encoding="utf-8") as f:
         log = json.load(f)
@@ -123,7 +128,7 @@ def main():
 
     # 2. Stills.
     os.makedirs(SCREENSHOTS, exist_ok=True)
-    prefix = os.path.join(SCREENSHOTS, f"final-cut-{log['created']}")
+    prefix = os.path.join(SCREENSHOTS, f"{args.name}-{log['created']}")
     for i, label in enumerate(log["labels"], 1):
         still(video, (label["out_start_s"] + min(label["out_end_s"], label["out_start_s"] + 3)) / 2,
               f"{prefix}-label-{i:02d}.png")
@@ -133,7 +138,15 @@ def main():
     for i, h in enumerate(log["holds"], 1):
         still(video, h["out_start_s"] + h["seconds"] / 2, f"{prefix}-hold-{i:02d}.png")
     if log["title_s"]:
-        still(video, log["title_s"] / 2, f"{prefix}-title.png")
+        still(video, log["title_start_s"] + log["title_s"] / 2, f"{prefix}-title.png")
+    if log["preview"]:
+        still(video, log["preview"]["out_end_s"] * 0.8, f"{prefix}-preview.png")
+    for i, tr in enumerate(log["trims"], 1):
+        still(video, tr["out_s"] + 0.5, f"{prefix}-trim-{i:02d}.png")
+    for i, (a, b) in enumerate(log["zoomed_out_s"], 1):
+        still(video, (a + b) / 2, f"{prefix}-zoom-{i:02d}.png")
+    for i, c in enumerate(log["captions"], 1):
+        still(video, (c["out_start_s"] + c["out_end_s"]) / 2, f"{prefix}-caption-{i:02d}.png")
     still(video, duration - 1, f"{prefix}-proof.png")
     box_stills = []
     for i, st in enumerate(leak["stretches"], 1):
@@ -155,11 +168,16 @@ def main():
                 if found:
                     failures.append(f"secret readable in {os.path.basename(path)}")
 
+    if args.no_sync:
+        print("PASS" if not failures else "FAIL:\n  " + "\n  ".join(failures))
+        sys.exit(1 if failures else 0)
+
     # 4. Sync and sound.
     samples = audio_samples(video)
     rms = audio_rms(samples)
     times, levels = tone_levels(samples, [BEEP_HZ, ROOM_TONE_HZ] + list(NARRATION_HZ.values()))
-    sped = [(s["out_start_s"], s["out_end_s"]) for s in log["speed_ups"]]
+    sped = [tuple(s) for s in log["muted_out_s"]]  # sped-up waits and the preview: take audio muted
+    zoomed = [tuple(s) for s in log["zoomed_out_s"]]  # zoomed in: the sync square may be out of view
 
     # The take's picture and sound stay together: every flash has its beep (still there, ducked, under narration).
     raw = run(["ffmpeg", "-v", "error", "-i", video, "-vf", f"crop={SYNC_CROP},scale=1:1:flags=area,format=gray",
@@ -170,14 +188,18 @@ def main():
     offsets = []
     for t in flashes:
         beep = min(beeps, key=lambda b: abs(b - t), default=None)
+        if inside(t, zoomed):
+            continue  # zoomed in: the square in the corner isn't where it was
         if beep is not None and abs(beep - t) < 0.25:
             offsets.append(beep - t)
         elif inside(t, sped):
-            print(f"  flash at {t:.3f} s has no beep: inside a sped-up wait, muted as intended")
+            print(f"  flash at {t:.3f} s has no beep: muted (sped-up wait or preview), as intended")
         else:
             failures.append(f"flash at {t:.3f} s has no beep")
     for b in beeps:
-        if not any(abs(b - t) < 0.25 for t in flashes):
+        if inside(b, zoomed):
+            print(f"  beep at {b:.3f} s: zoomed in, its flash is out of view")
+        elif not any(abs(b - t) < 0.25 for t in flashes):
             failures.append(f"beep at {b:.3f} s has no flash")
     if offsets:
         worst = max(offsets, key=abs)
@@ -193,9 +215,9 @@ def main():
             loudest = max(levels[ROOM_TONE_HZ][during].max(), levels[BEEP_HZ][during].max())
         else:
             loudest = rms[int(a * 100) + 1: int(b * 100) - 1].max()
-        print(f"  Sped-up wait {a:.2f}-{b:.2f} s: loudest take audio {loudest:.4f} (should be ~0)")
+        print(f"  Muted {a:.2f}-{b:.2f} s: loudest take audio {loudest:.4f} (should be ~0)")
         if loudest > 0.003:
-            failures.append(f"sped-up wait at {a:.2f} s is not muted")
+            failures.append(f"muted span at {a:.2f} s is not muted")
 
     if log["audio"] == "narration":
         for step in log["steps"]:
@@ -214,14 +236,20 @@ def main():
 
         # Ducking: the room tone runs all through each take at one level, so its level in the video is the take-audio gain.
         clips = [(s["out_start_s"], s["out_start_s"] + s["narration_s"]) for s in log["steps"] if s["narration"]]
-        audible = [(p["out_start_s"], p["out_end_s"] - p["hold_s"]) for p in log["pieces"] if p["speed"] == 1]
+        audible = [(p["out_start_s"], p["out_end_s"] - p["hold_s"]) for p in log["pieces"]
+                   if p["speed"] == 1 and not p["preview"]]
         heard = np.array([inside(t, audible, margin=-0.03) for t in times])  # take audio playing, away from part edges
         expected = expected_gain(times, clips, log["ducking"])
-        full = heard & (expected > 0.99)
-        if not full.any():
-            failures.append("no take audio at full level to compare the ducked level with")
+        # Full level is measured in the take itself: with still screens trimmed, a step can be no longer than its
+        # clip, so the video may never play the take audio at full level.
+        take = log["takes_used"][0]
+        if not os.path.isabs(take):
+            take = os.path.join(os.path.dirname(log["check_json"]), take)
+        reference = np.median(tone_levels(audio_samples(take, as_stereo_first=True), [ROOM_TONE_HZ])[1][ROOM_TONE_HZ])
+        if not reference > 0:
+            failures.append("no room tone in the take to compare the ducked level with")
         else:
-            gain = levels[ROOM_TONE_HZ] / np.median(levels[ROOM_TONE_HZ][full])
+            gain = levels[ROOM_TONE_HZ] / reference
             compared = heard & ~np.array([any(a <= t < a + DUCK_SKIP_S for a, _ in clips) for t in times])
             error = np.abs(gain - expected) * compared
             ducked = heard & (expected < log["ducking"]["take_audio_level"] + 0.01)

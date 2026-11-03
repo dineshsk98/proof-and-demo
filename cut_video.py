@@ -8,12 +8,14 @@ import tempfile
 import time
 from datetime import datetime
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from redact import redact_image
 
-# Stage 3, the final cut: picks the stretches the take checker chose, speeds up and labels waits,
-# labels every stitch, boxes secrets, adds narration and a proof card, and writes one MP4.
+# Stage 3, the final cut: picks the stretches the take checker chose, opens with a labelled preview of the payoff,
+# eases in on wherever the screen changes, trims still screens, speeds up and labels waits, labels every stitch,
+# boxes secrets, adds narration, captions, a music bed and a proof card, and writes one MP4.
 # Everything here runs on this laptop. No cloud calls.
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,12 +38,52 @@ DUCK_DOWN_S = 0.08  # time constant of the drop: fast, so the first word is clea
 DUCK_UP_S = 0.6  # time constant of the swell back: slow, so the take audio doesn't jump in
 DUCK_STEP_SAMPLES = 240  # the gain is worked out again every 5 ms
 
+# Zoom to action: ease in on where the screen changed, never so close that text goes soft.
+ZOOM_MAX = 1.6  # never closer than this
+ZOOM_MAX_UPSCALE = 1.2  # and never enlarge the take's own pixels more than 1.2x (a 2546 px wide take allows 1.59x)
+ZOOM_MIN = 1.15  # a smaller zoom isn't worth the movement
+ZOOM_EASE_S = 0.6  # time to ease in, ease out, or glide to a new region
+ZOOM_MARGIN = 1.1  # 10% room either side of the changed region
+ZOOM_SAME_REGION = 0.15  # regions this close (as a share of the view) are glided between, not zoomed out and in again
+CHANGE_SCALE = 4  # changed pixels are found on frames shrunk 4x: plenty for a box, and quick
+CHANGE_LEVEL = 20  # a pixel changed if its grey level moved by more than this (0-255)
+CHANGE_MIN_SHARE = 0.0005  # fewer changed pixels than this share of the frame (a cursor) isn't worth a zoom
+CHANGE_BEFORE_S, CHANGE_AFTER_S = 0.4, 0.6  # frames compared around each change time
+
+# Still screens that aren't waits are cut down, and every cut is labelled.
+HOLD_S = 1.5  # kept after a change, so the new screen can be seen
+LEAD_S = 0.5  # kept before the next change, so it doesn't arrive out of nowhere
+MIN_TRIM_S = 1.0  # cutting less than this isn't worth a jump
+TRIM_LABEL_SECONDS = 2
+
+# The payoff first: the last step's proof, labelled PREVIEW, then the title card, then the cut in order.
+PREVIEW_S = 4
+PREVIEW_AFTER_PROOF_S = 1.0  # the preview ends this long after the proof frame
+
+# Captions, for watching muted: lower third, above the labels.
+CAPTION_FONT = "C:/Windows/Fonts/seguisb.ttf"  # Segoe UI Semibold
+CAPTION_SIZE = 50
+CAPTION_MAX_WIDTH = 1500
+CAPTION_MAX_LINES = 2  # longer text is shown two lines at a time
+CAPTION_PAD = 24
+CAPTION_BOTTOM = 190  # px from the bottom edge to the caption box: clear of the labels (60 px up, about 95 px tall)
+CAPTION_CHARS_PER_SECOND = 15  # reading time when there is no narration audio yet
+CAPTION_MIN_SECONDS = 2
+
+# Music bed: low throughout, ducked deeper than the take audio under narration, faded in and out.
+MUSIC_LUFS = -30  # the bed is brought to this loudness (narration is around -16 to -20)
+MUSIC_DUCK_LEVEL = 0.12  # about -18 dB under narration, with the same fast-down, slow-up curve
+MUSIC_FADE_IN_S = 1.5
+MUSIC_FADE_OUT_S = 3.0
+
 UI_FONT = "C:/Windows/Fonts/segoeui.ttf"
 UI_BOLD = "C:/Windows/Fonts/segoeuib.ttf"
 LABEL_SIZE = 64  # px on a 1080p frame: readable at 1x on a phone
 LABEL_PAD = 22
 LABEL_MARGIN = 60  # px from the left and bottom edges. Labels go on footage only, never on the title or proof card.
-LABEL_COLOURS = {"SPED UP": (215, 110, 0), "STITCH": (200, 30, 70), "1x": (20, 130, 60), "HELD": (70, 80, 190)}
+LABEL_COLOURS = {"SPED UP": (215, 110, 0), "STITCH": (200, 30, 70), "1x": (20, 130, 60), "HELD": (70, 80, 190),
+                 "TRIMMED": (0, 115, 140), "PREVIEW": (130, 60, 180)}
+DRAW = ImageDraw.Draw(Image.new("RGB", (1, 1)))  # for measuring text
 
 FIT_1080P = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1"
 # Every intermediate part uses the same settings, so the parts can be joined without re-encoding the video.
@@ -82,6 +124,12 @@ def media_seconds(path):
 def has_audio(path):
     return run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
                 "-of", "csv=p=0", path]).strip() != ""
+
+
+def frame_size(path):
+    w, h = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                "-of", "csv=p=0", path]).strip().split(",")
+    return int(w), int(h)
 
 
 # ---------- Planning: which stretches, in what order, at what speed ----------
@@ -146,8 +194,72 @@ def make_pieces(stretches, check):
                 if prev["take"] != s["take"] or abs(prev["src_end"] - a) > 1e-6:
                     stitch_from = {"take": prev["take"], "s": prev["src_end"]}
             pieces.append({"step": s["step"], "take": s["take"], "src_start": a, "src_end": b, "speed": speed,
-                           "hold_s": 0, "stitch_from": stitch_from})
+                           "hold_s": 0, "stitch_from": stitch_from, "trim_from": None, "preview": False})
     return pieces
+
+
+def plan_trims(pieces, check):
+    # A still screen that isn't a wait is cut down: HOLD_S after each change, LEAD_S before the next one.
+    # Worked out on the take's own timeline, so a still screen running across a step boundary is one trim.
+    trims = []
+    for file in dict.fromkeys(p["take"] for p in pieces):
+        merged = []
+        for a, b in sorted((p["src_start"], p["src_end"]) for p in pieces if p["take"] == file and p["speed"] == 1):
+            if merged and a <= merged[-1][1] + 1e-6:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        changes = sorted(find_take(check, file)["changes"])
+        for a, b in merged:
+            points = [a] + [c for c in changes if a < c < b] + [b]
+            for p, q in zip(points, points[1:]):
+                start = p + HOLD_S
+                end = q - LEAD_S if q < b else q  # the end of the footage needs no lead-in
+                if end - start >= MIN_TRIM_S:
+                    trims.append({"take": file, "start_s": round(start, 3), "end_s": round(end, 3)})
+    return trims
+
+
+def apply_trims(pieces, trims):
+    # Cuts the trimmed spans out of the pieces. The part after a trim remembers it, for its label.
+    result = []
+    for p in pieces:
+        parts = [(p["src_start"], p["src_end"], None)]
+        for tr in trims:
+            if tr["take"] != p["take"] or p["speed"] != 1:
+                continue
+            kept = []
+            for a, b, trim_from in parts:
+                if tr["end_s"] <= a or tr["start_s"] >= b:
+                    kept.append((a, b, trim_from))
+                    continue
+                if tr["start_s"] > a:
+                    kept.append((a, tr["start_s"], trim_from))
+                if tr["end_s"] < b:
+                    kept.append((tr["end_s"], b, tr))
+            parts = kept
+        for a, b, trim_from in parts:
+            result.append(dict(p, src_start=a, src_end=b, trim_from=trim_from,
+                               stitch_from=p["stitch_from"] if a == p["src_start"] else None))
+    return result
+
+
+def make_preview(stretches, check):
+    # The payoff first: a few seconds of the last step's stretch, ending just after its proof frame.
+    last = stretches[-1]
+    take = find_take(check, last["take"])
+    proof = find_step(take, last["step"]).get("proof_frame")
+    proof_s = next((f["time_s"] for f in take.get("frames", []) if proof and f.get("sent_path") == proof),
+                   last["end_s"] - PREVIEW_AFTER_PROOF_S)
+    end = min(last["end_s"], proof_s + PREVIEW_AFTER_PROOF_S)
+    start = max(0.0, end - PREVIEW_S)
+    for w in take["waits"]:
+        if w["start_s"] < end and w["end_s"] > start:
+            start = max(start, w["end_s"])  # never a wait in the preview
+    if end - start < 1:
+        return None
+    return {"step": None, "take": last["take"], "src_start": start, "src_end": end, "speed": 1, "hold_s": 0,
+            "stitch_from": None, "trim_from": None, "preview": True}
 
 
 def out_len(piece):
@@ -184,14 +296,21 @@ def stitch_label(piece):
     return f"STITCH: {take_name(f['take'])} {clock(f['s'])} → {take_name(piece['take'])} {clock(piece['src_start'])}"
 
 
-def piece_labels(piece, one_take):
+def trim_label(piece):
+    tr = piece["trim_from"]
+    return f"TRIMMED {tr['end_s'] - tr['start_s']:.1f} s OF STILL SCREEN"
+
+
+def piece_labels(piece, base_label):
     # [(text, start, end)] in the piece's own output time. Every moment of footage carries a label.
     length = out_len(piece)
+    if piece["preview"]:
+        return [("PREVIEW", 0, length)]
     held_from = length - piece["hold_s"]
     if piece["speed"] > 1:
         base = f"SPED UP {piece['speed']:g}x"
-    elif one_take:
-        base = "1x ONE TAKE"
+    elif base_label:
+        base = base_label
     else:
         base = f"1x · {take_name(piece['take'])}"
     labels = []
@@ -199,11 +318,136 @@ def piece_labels(piece, one_take):
     if piece["stitch_from"]:
         t = min(STITCH_LABEL_SECONDS, length)
         labels.append((stitch_label(piece), 0, t))
+    elif piece["trim_from"]:
+        t = min(TRIM_LABEL_SECONDS, length)
+        labels.append((trim_label(piece), 0, t))
     if t < held_from:
         labels.append((base, t, held_from))
     if piece["hold_s"] and max(t, held_from) < length:
         labels.append(("HELD FRAME", max(t, held_from), length))
     return labels
+
+
+# ---------- Zoom: ease in on where the screen changed ----------
+# Each take is worked on at its own resolution (up to ZOOM_MAX x 1080p) inside a padded 16:9 frame,
+# and each output frame is cut from it by Pillow: crop a box, resize to 1080p. The box can sit between
+# pixels, so slow zooms are smooth. (ffmpeg's zoompan rounds its crop to whole pixels, which makes slow
+# zooms wobble, and its crop filter can't change size from frame to frame.)
+
+def take_info(path):
+    w, h = frame_size(path)
+    bw = max(w, math.ceil(h * 16 / 9 / 2) * 2)  # the 16:9 frame that holds the whole take
+    bh = max(h, round(bw * 9 / 16 / 2) * 2)
+    return {"path": path, "w": w, "h": h, "bw": bw, "bh": bh,
+            "zoom_cap": min(ZOOM_MAX, ZOOM_MAX_UPSCALE * bw / W)}
+
+
+def full_view(info):
+    return (1.0, info["bw"] / 2, info["bh"] / 2)
+
+
+def clamp_view(view, info):
+    # Keeps the view inside the frame.
+    z, cx, cy = view
+    vw, vh = info["bw"] / z, info["bh"] / z
+    return (z, min(max(cx, vw / 2), info["bw"] - vw / 2), min(max(cy, vh / 2), info["bh"] - vh / 2))
+
+
+def view_box(view, info):
+    z, cx, cy = clamp_view(view, info)
+    vw, vh = info["bw"] / z, info["bh"] / z
+    return (cx - vw / 2, cy - vh / 2, cx + vw / 2, cy + vh / 2)
+
+
+def grey_frame(info, t):
+    w, h = info["w"] // CHANGE_SCALE, info["h"] // CHANGE_SCALE
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(t, 0):.3f}", "-i", info["path"], "-frames:v", "1",
+                          "-vf", f"scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True).stdout
+    if len(raw) != w * h:
+        return None  # past the end of the take
+    return np.frombuffer(raw, np.uint8).reshape(h, w).astype(int)
+
+
+def change_region(info, t):
+    # Where the screen changed at t, as a view (zoom, centre x, centre y), or None if it isn't worth a zoom.
+    # The region is the box holding the middle 96% of the pixels that differ between a frame just before
+    # and one just after, so a moving cursor doesn't stretch it. The zoom fits the box's width; a box taller
+    # than the view (a scrolled page) is cropped top and bottom, since a scrolled column reads top to bottom.
+    before, after = grey_frame(info, t - CHANGE_BEFORE_S), grey_frame(info, t + CHANGE_AFTER_S)
+    if before is None or after is None:
+        return None
+    ys, xs = np.nonzero(np.abs(before - after) > CHANGE_LEVEL)
+    if len(xs) < CHANGE_MIN_SHARE * before.size:
+        return None
+    x0, x1 = np.percentile(xs, [2, 98]) * CHANGE_SCALE
+    y0, y1 = np.percentile(ys, [2, 98]) * CHANGE_SCALE
+    z = min(info["zoom_cap"], info["bw"] / (max(x1 - x0, 1) * ZOOM_MARGIN))
+    if z < ZOOM_MIN:
+        return None
+    pad_x, pad_y = (info["bw"] - info["w"]) / 2, (info["bh"] - info["h"]) / 2
+    return clamp_view((z, (x0 + x1) / 2 + pad_x, (y0 + y1) / 2 + pad_y), info)
+
+
+def similar(a, b, info):
+    return (abs(a[0] - b[0]) <= ZOOM_SAME_REGION * a[0]
+            and math.hypot(a[1] - b[1], a[2] - b[2]) <= ZOOM_SAME_REGION * info["bw"] / a[0])
+
+
+def plan_zoom(pieces, check, regions, infos):
+    # One track of (source time, view) keyframes per run of 1x footage from one take. Trims don't break a run:
+    # what they cut was a still screen. At each change the view eases in on the changed region, glides if the
+    # region is about where it already is, and eases back out to the full frame (arriving as the change
+    # happens) before a change somewhere else. At a stitch, wait or the end, it cuts.
+    track, last = [], None
+    for p in pieces:
+        info = infos[p["take"]]
+        if p["speed"] > 1:
+            p["zoom_track"], last = [], None
+            continue
+        if not (last and last["take"] == p["take"] and not p["stitch_from"] and p["src_start"] >= last["src_end"] - 1e-6):
+            track = [(p["src_start"], full_view(info))]
+        for c in sorted(find_take(check, p["take"])["changes"]):
+            if not p["src_start"] - 1e-6 <= c < p["src_end"]:
+                continue
+            target = regions.get((p["take"], c))
+            now_t, now = track[-1]
+            if now[0] > 1 and not (target and similar(now, target, info)):
+                start = max(now_t, c - ZOOM_EASE_S)
+                if start < c - 0.05:
+                    if start > now_t:
+                        track.append((start, now))
+                    track.append((c, full_view(info)))
+                elif not target:
+                    track.append((now_t + ZOOM_EASE_S, full_view(info)))  # changes too close: just ease out
+            if target:
+                t0 = max(c, track[-1][0])
+                if t0 > track[-1][0]:
+                    track.append((t0, track[-1][1]))  # hold until the change
+                track.append((t0 + ZOOM_EASE_S, target))
+        p["zoom_track"], last = track, p
+
+
+def preview_track(preview, check, regions, infos):
+    # The preview pushes in slowly, over its whole length, on the last change it shows.
+    info = infos[preview["take"]]
+    changes = [c for c in find_take(check, preview["take"])["changes"]
+               if preview["src_start"] <= c < preview["src_end"] and regions.get((preview["take"], c))]
+    if not changes:
+        return []
+    return [(preview["src_start"], full_view(info)), (preview["src_end"], regions[(preview["take"], changes[-1])])]
+
+
+def view_at(track, t, info):
+    if not track:
+        return full_view(info)
+    if t <= track[0][0]:
+        return track[0][1]
+    for (t0, a), (t1, b) in zip(track, track[1:]):
+        if t <= t1:
+            s = (t - t0) / (t1 - t0) if t1 > t0 else 1
+            s = s * s * (3 - 2 * s)  # smoothstep: starts and ends gently
+            return tuple(x + (y - x) * s for x, y in zip(a, b))
+    return track[-1][1]
 
 
 # ---------- Redaction: one OCR read per stable stretch, boxes kept until the next change ----------
@@ -254,6 +498,66 @@ def shown_at(stretch, pieces):
     return spans
 
 
+# ---------- Captions ----------
+
+def wrap(draw, text, font, width):
+    lines, line = [], ""
+    for word in text.split():
+        test = f"{line} {word}".strip()
+        if line and draw.textlength(test, font=font) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = test
+    return lines + [line] if line else lines
+
+
+def plan_captions(pieces, texts, narration, main_end):
+    # Each step's narration text, timed to its narration clip. Without audio yet, it stays up for a reading
+    # time from the step's start (or from when the previous caption ends, if that is later).
+    font = ImageFont.truetype(CAPTION_FONT, CAPTION_SIZE)
+    captions, free_from = [], 0
+    for number, text in sorted(texts.items()):
+        step_pieces = [p for p in pieces if p["step"] == number]
+        if not step_pieces or not text.strip():
+            continue
+        clip = next((c for c in narration if c["number"] == number), None)
+        if clip:
+            start, end = clip["out_start_s"], clip["out_start_s"] + clip["duration_s"]
+        else:
+            start = max(step_pieces[0]["out_start_s"], free_from)
+            end = start + max(CAPTION_MIN_SECONDS, len(text) / CAPTION_CHARS_PER_SECOND)
+        end = min(end, main_end)
+        if end - start < 0.5:
+            continue
+        free_from = end
+        lines = wrap(DRAW, text, font, CAPTION_MAX_WIDTH)
+        chunks = [lines[i:i + CAPTION_MAX_LINES] for i in range(0, len(lines), CAPTION_MAX_LINES)]
+        # Two lines at a time, each chunk on screen for its share of the characters.
+        total_chars = sum(len(" ".join(c)) for c in chunks)
+        t = start
+        for chunk in chunks:
+            d = (end - start) * len(" ".join(chunk)) / total_chars
+            captions.append({"step": number, "lines": chunk, "out_start_s": round(t, 3), "out_end_s": round(t + d, 3)})
+            t += d
+    return captions
+
+
+def render_caption(lines, path):
+    # White semibold text on a dark box: readable over any screen, with the sound off.
+    font = ImageFont.truetype(CAPTION_FONT, CAPTION_SIZE)
+    ascent, descent = font.getmetrics()
+    line_h = round(CAPTION_SIZE * 1.3)
+    width = max(DRAW.textlength(line, font=font) for line in lines)
+    img = Image.new("RGBA", (int(width) + 2 * CAPTION_PAD, 2 * CAPTION_PAD + (len(lines) - 1) * line_h + ascent + descent),
+                    (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, img.width - 1, img.height - 1], radius=16, fill=(0, 0, 0, 205))
+    for i, line in enumerate(lines):
+        d.text((img.width / 2, CAPTION_PAD + i * line_h), line, font=font, fill="white", anchor="ma")
+    img.save(path)
+
+
 # ---------- Rendering ----------
 
 def render_label(text, path):
@@ -270,18 +574,25 @@ def render_label(text, path):
 
 
 def normalise(src, dst):
-    # Game Bar and Snipping Tool takes can have a variable frame rate. Re-encode to a constant 30 fps,
-    # 1080p (letterboxed if needed) and 48 kHz stereo, so every later cut lands on whole frames.
+    # Game Bar and Snipping Tool takes can have a variable frame rate. Re-encode to a constant 30 fps and
+    # 48 kHz stereo, so every later cut lands on whole frames. The take keeps its own resolution (the zoom
+    # needs those pixels), shrunk only if it is bigger than ZOOM_MAX x 1080p, which could never be shown.
+    w, h = frame_size(src)
+    scale = min(1.0, ZOOM_MAX * W / w, ZOOM_MAX * H / h)
+    size = f"{round(w * scale / 2) * 2}:{round(h * scale / 2) * 2}"
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", src]
     audio = "0:a:0"
     if not has_audio(src):
         cmd += ["-f", "lavfi", "-i", f"anullsrc=r={SAMPLE_RATE}:cl=stereo", "-shortest"]
         audio = "1:a"
-    cmd += ["-map", "0:v:0", "-map", audio, "-vf", f"{FIT_1080P},fps={FPS}", "-af", "aresample=async=1"]
+    cmd += ["-map", "0:v:0", "-map", audio, "-vf", f"scale={size},setsar=1,fps={FPS}", "-af", "aresample=async=1"]
     run(cmd + ENCODE + [dst])
 
 
-def render_piece(piece, norm_path, stretches, label_paths, silent, out_path):
+def render_piece(piece, info, stretches, overlays, silent, out_path):
+    # ffmpeg decodes the piece (boxes drawn, speed applied, padded to 16:9) into raw frames, Pillow cuts
+    # each frame's view out of it at 1080p, and a second ffmpeg lays the labels and captions on top (so
+    # they never zoom) and encodes it with the piece's audio. Returns, per frame, whether it was zoomed in.
     src_len = piece["src_end"] - piece["src_start"]
     video = ["setpts=PTS-STARTPTS"]
     for st in stretches:
@@ -294,24 +605,54 @@ def render_piece(piece, norm_path, stretches, label_paths, silent, out_path):
         for f in st["findings"]:
             x, y, w, h = f["box"]
             video.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill:enable='between(t,{a:.3f},{b:.3f})'")
-    # Speed up, back to 30 fps, and clone the last frame for a hold (and to fill any rounding gap).
-    video += [f"setpts=PTS/{piece['speed']}", f"fps={FPS}", f"tpad=stop_mode=clone:stop_duration={piece['hold_s'] + 1}"]
+    video += [f"setpts=PTS/{piece['speed']}", f"fps={FPS}", f"pad={info['bw']}:{info['bh']}:(ow-iw)/2:(oh-ih)/2"]
+    decoder = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{piece['src_start']:.3f}", "-t", f"{src_len:.3f}",
+                                "-i", info["path"], "-vf", ",".join(video), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-    cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{piece['src_start']:.3f}", "-t", f"{src_len:.3f}", "-i", norm_path]
-    graph = [f"[0:v]{','.join(video)}[v0]"]
-    for k, (text, t0, t1) in enumerate(piece["labels"]):
-        cmd += ["-i", label_paths[text]]
-        graph.append(f"[v{k}][{k + 1}:v]overlay=x={LABEL_MARGIN}:y=main_h-overlay_h-{LABEL_MARGIN}"
-                     f":enable='gte(t,{t0:.3f})*lt(t,{t1:.3f})'[v{k + 1}]")
-    n = len(piece["labels"])
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-"]
+    graph = ["[0:v]null[v0]"]
     if silent:
         cmd += ["-f", "lavfi", "-i", f"anullsrc=r={SAMPLE_RATE}:cl=stereo"]
-        audio = f"{n + 1}:a"
+        audio = "1:a"
     else:
-        graph.append("[0:a]asetpts=PTS-STARTPTS,apad[a]")
+        cmd += ["-ss", f"{piece['src_start']:.3f}", "-t", f"{src_len:.3f}", "-i", info["path"]]
+        graph.append("[1:a]asetpts=PTS-STARTPTS,apad[a]")
         audio = "[a]"
-    cmd += ["-filter_complex", ";".join(graph), "-map", f"[v{n}]", "-map", audio, "-t", f"{out_len(piece):.6f}"]
-    run(cmd + ENCODE + [out_path])
+    for k, (png, t0, t1, kind) in enumerate(overlays):
+        cmd += ["-i", png]
+        if kind == "label":
+            where = f"x={LABEL_MARGIN}:y=main_h-overlay_h-{LABEL_MARGIN}"
+        else:
+            where = f"x=(main_w-overlay_w)/2:y=main_h-overlay_h-{CAPTION_BOTTOM}"
+        graph.append(f"[v{k}][{k + 2}:v]overlay={where}:enable='gte(t,{t0:.3f})*lt(t,{t1:.3f})'[v{k + 1}]")
+    cmd += ["-filter_complex", ";".join(graph), "-map", f"[v{len(overlays)}]", "-map", audio,
+            "-t", f"{out_len(piece):.6f}"] + ENCODE + [out_path]
+
+    frame_bytes = info["bw"] * info["bh"] * 3
+    frame, zoomed = None, []
+    with tempfile.TemporaryFile() as errors:
+        encoder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errors)
+        try:
+            for i in range(round(out_len(piece) * FPS)):
+                raw = decoder.stdout.read(frame_bytes)
+                if len(raw) == frame_bytes:
+                    frame = Image.frombytes("RGB", (info["bw"], info["bh"]), raw)
+                elif frame is None:
+                    sys.exit(f"Couldn't read frames from {info['path']} at {piece['src_start']:.2f} s")
+                # A held frame (and any rounding gap at the end) repeats the last frame, at the last view.
+                view = view_at(piece["zoom_track"], piece["src_start"] + min(i / FPS * piece["speed"], src_len), info)
+                zoomed.append(view[0] > 1.001)
+                encoder.stdin.write(frame.resize((W, H), Image.BICUBIC, box=view_box(view, info)).tobytes())
+            encoder.stdin.close()
+        except BrokenPipeError:
+            pass  # the encoder stopped early; its error is reported below
+        decoder.kill()
+        decoder.wait()
+        if encoder.wait() != 0:
+            errors.seek(0)
+            sys.exit(f"ffmpeg failed: {errors.read().decode(errors='replace').strip()[-800:]}")
+    return zoomed
 
 
 def render_still(png, seconds, out_path):
@@ -320,12 +661,12 @@ def render_still(png, seconds, out_path):
          "-map", "0:v", "-map", "1:a", "-vf", FIT_1080P, "-t", f"{seconds:.6f}"] + ENCODE + [out_path])
 
 
-def duck_volume(narration):
-    # The take audio's gain over the whole video, as one ffmpeg expression of t: 1 with no narration,
-    # falling towards DUCK_LEVEL while a clip plays and swelling back after it. Each move is exponential,
-    # like Web Audio's setTargetAtTime in Kelir. We know exactly when each clip plays, so this is a plain
-    # volume envelope rather than sidechaincompress: a compressor's drop depends on how loud the narration
-    # is and lifts in every pause between sentences, while this holds at exactly DUCK_LEVEL for the whole clip.
+def duck_volume(narration, level):
+    # A gain over the whole video, as one ffmpeg expression of t: 1 with no narration, falling towards
+    # `level` while a clip plays and swelling back after it. Each move is exponential, like Web Audio's
+    # setTargetAtTime in Kelir. We know exactly when each clip plays, so this is a plain volume envelope
+    # rather than sidechaincompress: a compressor's drop depends on how loud the narration is and lifts in
+    # every pause between sentences, while this holds at exactly `level` for the whole clip.
     # fit_narration makes every step at least as long as its clip, so clips never overlap.
     segments = [(0, "1")]  # (from this time, the gain formula)
     gain, last_end = 1.0, None
@@ -333,8 +674,8 @@ def duck_volume(narration):
         start, end = clip["out_start_s"], clip["out_start_s"] + clip["duration_s"]
         if last_end is not None:
             gain = 1 - (1 - gain) * math.exp(-(start - last_end) / DUCK_UP_S)  # how far it got back up
-        segments.append((start, f"{DUCK_LEVEL}+{gain - DUCK_LEVEL:.5f}*exp(-(t-{start:.4f})/{DUCK_DOWN_S})"))
-        gain = DUCK_LEVEL + (gain - DUCK_LEVEL) * math.exp(-(end - start) / DUCK_DOWN_S)
+        segments.append((start, f"{level}+{gain - level:.5f}*exp(-(t-{start:.4f})/{DUCK_DOWN_S})"))
+        gain = level + (gain - level) * math.exp(-(end - start) / DUCK_DOWN_S)
         segments.append((end, f"1-{1 - gain:.5f}*exp(-(t-{end:.4f})/{DUCK_UP_S})"))
         last_end = end
     expr = segments[-1][1]
@@ -343,43 +684,49 @@ def duck_volume(narration):
     return expr
 
 
-def join_parts(parts, narration, total, work_dir, out_path):
-    # Joins the parts without re-encoding the video; the audio is encoded to AAC once, here.
+def loudness(path):
+    # Integrated loudness (LUFS) from ffmpeg's EBU R128 meter, so any music file sits at the same level.
+    result = subprocess.run(["ffmpeg", "-nostats", "-i", path, "-af", "ebur128=framelog=quiet", "-f", "null", "-"],
+                            capture_output=True, text=True)
+    lines = [line for line in result.stderr.splitlines() if line.strip().startswith("I:")]
+    if not lines:
+        sys.exit(f"Couldn't measure the loudness of {path}")
+    return float(lines[-1].split()[1])
+
+
+def join_parts(parts, narration, music, total, work_dir, out_path):
+    # Joins the parts without re-encoding the video; the audio is mixed and encoded to AAC once, here.
     list_path = os.path.join(work_dir, "parts.txt")
     with open(list_path, "w", encoding="utf-8") as f:
         for part in parts:
             f.write(f"file '{part.replace(os.sep, '/')}'\n")
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", list_path]
-    if narration:
-        # Each step's clip starts where its step starts, over the take audio ducked under it.
-        # Small audio frames, so the volume filter (which works per frame) moves the gain every 5 ms.
-        graph = [f"[0:a]asetnsamples=n={DUCK_STEP_SAMPLES}:p=0,volume='{duck_volume(narration)}':eval=frame[take]"]
-        for k, clip in enumerate(narration):
-            cmd += ["-i", clip["file"]]
-            delay = round(clip["out_start_s"] * SAMPLE_RATE)
-            graph.append(f"[{k + 1}:a]aresample={SAMPLE_RATE},aformat=channel_layouts=stereo,"
-                         f"adelay=delays={delay}S:all=1[n{k}]")
-        graph.append("[take]" + "".join(f"[n{k}]" for k in range(len(narration)))
-                     + f"amix=inputs={len(narration) + 1}:normalize=0,apad,atrim=end={total:.6f}[a]")
-        cmd += ["-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]"]
-    else:
-        cmd += ["-map", "0:v", "-map", "0:a"]
+    # Small audio frames, so the volume filter (which works per frame) moves a ducking gain every 5 ms.
+    duck = f"asetnsamples=n={DUCK_STEP_SAMPLES}:p=0,volume='{{}}':eval=frame"
+    graph = [f"[0:a]{duck.format(duck_volume(narration, DUCK_LEVEL))}[take]" if narration else "[0:a]anull[take]"]
+    mix = ["[take]"]
+    for k, clip in enumerate(narration, 1):
+        # Each step's clip starts where its step starts.
+        cmd += ["-i", clip["file"]]
+        delay = round(clip["out_start_s"] * SAMPLE_RATE)
+        graph.append(f"[{k}:a]aresample={SAMPLE_RATE},aformat=channel_layouts=stereo,adelay=delays={delay}S:all=1[n{k}]")
+        mix.append(f"[n{k}]")
+    if music:
+        # Looped if it is shorter than the video, brought to MUSIC_LUFS, ducked under narration, faded in and out.
+        cmd += ["-stream_loop", "-1", "-i", music]
+        chain = [f"aresample={SAMPLE_RATE}", "aformat=channel_layouts=stereo", f"volume={MUSIC_LUFS - loudness(music):.2f}dB"]
+        if narration:
+            chain.append(duck.format(duck_volume(narration, MUSIC_DUCK_LEVEL)))
+        chain += [f"afade=t=in:d={MUSIC_FADE_IN_S}", f"afade=t=out:st={total - MUSIC_FADE_OUT_S:.3f}:d={MUSIC_FADE_OUT_S}",
+                  f"atrim=end={total:.6f}"]
+        graph.append(f"[{len(narration) + 1}:a]{','.join(chain)}[music]")
+        mix.append("[music]")
+    graph.append("".join(mix) + f"amix=inputs={len(mix)}:normalize=0,apad,atrim=end={total:.6f}[a]")
+    cmd += ["-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]"]
     run(cmd + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out_path])
 
 
 # ---------- Proof card ----------
-
-def wrap(draw, text, font, width):
-    lines, line = [], ""
-    for word in text.split():
-        test = f"{line} {word}".strip()
-        if line and draw.textlength(test, font=font) > width:
-            lines.append(line)
-            line = word
-        else:
-            line = test
-    return lines + [line] if line else lines
-
 
 def make_proof_card(log, thumbs, path):
     img = Image.new("RGB", (W, H), (18, 20, 26))
@@ -388,7 +735,10 @@ def make_proof_card(log, thumbs, path):
     grey = (190, 190, 190)
 
     d.text((60, 36), "Proof card", font=title, fill="white")
-    if log["mode"] == "one_take":
+    if log["mode"] == "one_take" and log["trims"]:
+        mode = (f"1x ONE TAKE · TRIMMED: every step from {take_name(log['one_take_pass'])}, in order, "
+                f"with still screens cut down (each cut labelled)")
+    elif log["mode"] == "one_take":
         mode = f"1x ONE TAKE: every step from {take_name(log['one_take_pass'])}, one continuous recording"
     else:
         mode = f"Stitched from {len(log['takes_used'])} takes, {len(log['stitches'])} stitch(es), each one labelled"
@@ -413,9 +763,17 @@ def make_proof_card(log, thumbs, path):
         y += row_h
 
     # Right: every edit, then the redaction counts.
-    edits = [f"SPED UP {s['speed']:g}x: {take_name(s['take'])} {clock(s['src_start_s'])}–{clock(s['src_end_s'])}, "
-             f"{s['src_end_s'] - s['src_start_s']:.1f} s shown in {s['out_end_s'] - s['out_start_s']:.1f} s"
-             for s in log["speed_ups"]]
+    edits = []
+    if log["preview"]:
+        p = log["preview"]
+        edits.append(f"PREVIEW first: {take_name(p['take'])} {clock(p['src_start_s'])}–{clock(p['src_end_s'])}, "
+                     f"shown again in its place")
+    edits += [f"SPED UP {s['speed']:g}x: {take_name(s['take'])} {clock(s['src_start_s'])}–{clock(s['src_end_s'])}, "
+              f"{s['src_end_s'] - s['src_start_s']:.1f} s shown in {s['out_end_s'] - s['out_start_s']:.1f} s"
+              for s in log["speed_ups"]]
+    if log["trims"]:
+        edits.append(f"TRIMMED {len(log['trims'])} still screen(s), "
+                     f"{sum(t['end_s'] - t['start_s'] for t in log['trims']):.1f} s in all")
     edits += [f"{s['label']} (at {clock(s['out_s'])} in the video)" for s in log["stitches"]]
     edits += [f"HELD FRAME {h['seconds']:.1f} s at {clock(h['out_start_s'])}, so step {h['step']}'s narration isn't cut"
               for h in log["holds"]]
@@ -445,13 +803,28 @@ def make_proof_card(log, thumbs, path):
     img.save(path)
 
 
+def spans(flags, start):
+    # [[start, end], ...] output times where flags (one per frame) are True.
+    result = []
+    for i, on in enumerate(flags):
+        if on and i > 0 and flags[i - 1]:
+            result[-1][1] = round(start + (i + 1) / FPS, 3)
+        elif on:
+            result.append([round(start + i / FPS, 3), round(start + (i + 1) / FPS, 3)])
+    return result
+
+
 # ---------- Main ----------
 
 def main():
     parser = argparse.ArgumentParser(description="Cut the final demo video from checked takes. Runs fully locally.")
     parser.add_argument("check", help="take-check JSON from check_takes.py")
-    parser.add_argument("--narration", help="narration JSON: {steps:[{number, file, duration_s}]}")
-    parser.add_argument("--title-card", help="PNG shown for the first few seconds")
+    parser.add_argument("--narration", help="narration JSON from narrate.py: {steps:[{number, file, duration_s}]}")
+    parser.add_argument("--storyline", help="storyline JSON: each step's narration text becomes its caption")
+    parser.add_argument("--variant", type=int, default=1, help="storyline variant for the captions, from 1 (default 1)")
+    parser.add_argument("--title-card", help="PNG shown after the preview")
+    parser.add_argument("--music", help="music bed (MP3/WAV), e.g. from make_music.py")
+    parser.add_argument("--no-preview", action="store_true", help="start with the title card instead of a preview")
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
     started = time.time()
@@ -462,6 +835,8 @@ def main():
 
     one_take, stretches = plan_stretches(check)
     pieces = make_pieces(stretches, check)
+    trims = plan_trims(pieces, check)
+    pieces = apply_trims(pieces, trims)
     narration = []
     if args.narration:
         with open(args.narration, encoding="utf-8") as f:
@@ -471,19 +846,37 @@ def main():
                 # Measured, not taken from the JSON, so a wrong duration can't make clips overlap.
                 narration.append({"number": s["number"], "file": file, "duration_s": media_seconds(file)})
         fit_narration(pieces, narration)
+    texts = {}
+    if args.storyline:
+        with open(args.storyline, encoding="utf-8") as f:
+            variants = json.load(f)["variants"]
+        if not 1 <= args.variant <= len(variants):
+            sys.exit(f"--variant must be from 1 to {len(variants)} for {args.storyline}")
+        texts = {s["number"]: s.get("narration", "") for s in variants[args.variant - 1]["steps"]}
+    preview = None if args.no_preview else make_preview(stretches, check)
+    # "1x ONE TAKE" stays true only with nothing cut out; with trims the label says so all the way through.
+    base_label = ("1x ONE TAKE · TRIMMED" if trims else "1x ONE TAKE") if one_take else None
 
-    # Place everything on the output timeline.
-    title_s = TITLE_SECONDS if args.title_card else 0
-    t = title_s
+    # Place everything on the output timeline: preview, title card, the cut in order, proof card.
+    t = 0
+    if preview:
+        preview["out_start_s"], preview["out_end_s"] = 0, out_len(preview)
+        preview["labels"] = piece_labels(preview, base_label)
+        t = out_len(preview)
+    title_start, title_s = t, TITLE_SECONDS if args.title_card else 0
+    t += title_s
     for p in pieces:
         p["out_start_s"] = round(t, 6)
         t += out_len(p)
         p["out_end_s"] = round(t, 6)
-        p["labels"] = piece_labels(p, one_take)
+        p["labels"] = piece_labels(p, base_label)
+    main_end = t
     total = t + PROOF_SECONDS
     for clip in narration:
         clip["out_start_s"] = next((p["out_start_s"] for p in pieces if p["step"] == clip["number"]), None)
     narration = [c for c in narration if c["out_start_s"] is not None]
+    captions = plan_captions(pieces, texts, narration, main_end)
+    shown = ([preview] if preview else []) + pieces  # everything that shows footage
 
     warnings = []
     if total > MAX_SECONDS:
@@ -495,20 +888,35 @@ def main():
     card_path = os.path.join(args.out_dir, f"{stamp}.proof-card.png")
     log_path = os.path.join(args.out_dir, f"{stamp}.cut-log.json")
     leak_path = os.path.join(args.out_dir, f"{stamp}.leak-report.json")
-    takes_used = list(dict.fromkeys(p["take"] for p in pieces))
+    takes_used = list(dict.fromkeys(p["take"] for p in shown))
 
     with tempfile.TemporaryDirectory() as work:
-        print(f"Normalising {len(takes_used)} take(s) to constant {FPS} fps, 1080p...")
+        print(f"Normalising {len(takes_used)} take(s) to constant {FPS} fps...")
         clock_start = time.time()
-        norm_paths = {}
+        norm_paths, infos = {}, {}
         for i, file in enumerate(takes_used):
             norm_paths[file] = os.path.join(work, f"take{i}.mkv")
             normalise(resolve(file, base_dir), norm_paths[file])
+            infos[file] = take_info(norm_paths[file])
         normalise_s = time.time() - clock_start
 
         clock_start = time.time()
-        red_stretches = stable_stretches(pieces, check)
-        print(f"Redacting locally: {len(red_stretches)} stable stretches (about 17 s per frame on CPU)...")
+        regions = {}
+        for file in takes_used:
+            used = [c for c in find_take(check, file)["changes"]
+                    if any(p["take"] == file and p["speed"] == 1 and p["src_start"] - 1e-6 <= c < p["src_end"] for p in shown)]
+            print(f"Finding where the screen changed: {len(used)} change(s) in {take_name(file)} "
+                  f"(zoom capped at {infos[file]['zoom_cap']:.2f}x)")
+            for c in used:
+                regions[(file, c)] = change_region(infos[file], c)
+        plan_zoom(pieces, check, regions, infos)
+        if preview:
+            preview["zoom_track"] = preview_track(preview, check, regions, infos)
+        zoom_s = time.time() - clock_start
+
+        clock_start = time.time()
+        red_stretches = stable_stretches(shown, check)
+        print(f"Redacting locally: {len(red_stretches)} stable stretches (about 10-25 s per frame on CPU)...")
         find_boxes(red_stretches, norm_paths, work)
         thumbs, proof_findings, steps_log = {}, [], []
         for s in stretches:
@@ -536,14 +944,14 @@ def main():
 
         counts, seen = {}, set()
         for st in red_stretches:
-            st["shown_at_out_s"] = shown_at(st, pieces)
+            st["shown_at_out_s"] = shown_at(st, shown)
             for f in st["findings"]:
                 if (f["kind"], f["preview"]) not in seen:
                     seen.add((f["kind"], f["preview"]))
                     counts[f["kind"]] = counts.get(f["kind"], 0) + 1
 
         labels = []
-        for p in pieces:
+        for p in shown:
             for text, t0, t1 in p["labels"]:
                 start, end = round(p["out_start_s"] + t0, 3), round(p["out_start_s"] + t1, 3)
                 if labels and labels[-1]["text"] == text and abs(labels[-1]["out_end_s"] - start) < 1e-3:
@@ -554,25 +962,37 @@ def main():
         log = {
             "video": video_path, "proof_card": card_path, "leak_report": leak_path, "created": stamp,
             "check_json": os.path.abspath(args.check), "narration_json": args.narration, "title_card": args.title_card,
+            "storyline": args.storyline, "variant": args.variant if args.storyline else None, "music": args.music,
             "mode": "one_take" if one_take else "stitched", "one_take_pass": check.get("one_take_pass"),
             "takes_used": takes_used, "duration_s": round(total, 3), "warnings": warnings,
             "audio": "narration" if narration else "take audio, muted during sped-up waits",
-            "ducking": {"take_audio_level": DUCK_LEVEL, "down_time_constant_s": DUCK_DOWN_S,
+            "ducking": {"take_audio_level": DUCK_LEVEL, "music_level": MUSIC_DUCK_LEVEL, "down_time_constant_s": DUCK_DOWN_S,
                         "up_time_constant_s": DUCK_UP_S} if narration else None,
-            "title_s": title_s, "proof_card_s": PROOF_SECONDS,
+            "title_start_s": title_start, "title_s": title_s, "proof_card_s": PROOF_SECONDS,
+            "preview": {"take": preview["take"], "src_start_s": preview["src_start"], "src_end_s": preview["src_end"],
+                        "out_start_s": 0, "out_end_s": preview["out_end_s"]} if preview else None,
             "steps": steps_log,
             "pieces": [{"step": p["step"], "take": p["take"], "src_start_s": p["src_start"], "src_end_s": p["src_end"],
-                        "speed": p["speed"], "hold_s": round(p["hold_s"], 3),
-                        "out_start_s": p["out_start_s"], "out_end_s": p["out_end_s"]} for p in pieces],
+                        "speed": p["speed"], "hold_s": round(p["hold_s"], 3), "preview": p["preview"],
+                        "out_start_s": p["out_start_s"], "out_end_s": p["out_end_s"]} for p in shown],
             "speed_ups": [{"take": p["take"], "src_start_s": p["src_start"], "src_end_s": p["src_end"], "speed": p["speed"],
                            "out_start_s": p["out_start_s"], "out_end_s": p["out_end_s"]} for p in pieces if p["speed"] > 1],
+            "trims": [dict(tr, out_s=next(p["out_start_s"] for p in pieces if p["trim_from"] is tr))
+                      for tr in trims if any(p["trim_from"] is tr for p in pieces)],
             "stitches": [{"label": stitch_label(p), "from_take": p["stitch_from"]["take"], "from_s": p["stitch_from"]["s"],
                           "to_take": p["take"], "to_s": p["src_start"], "out_s": p["out_start_s"]}
                          for p in pieces if p["stitch_from"]],
             "holds": [{"step": p["step"], "seconds": round(p["hold_s"], 3),
                        "out_start_s": round(p["out_end_s"] - p["hold_s"], 3), "reason": "narration longer than the step"}
                       for p in pieces if p["hold_s"]],
+            "muted_out_s": [[p["out_start_s"], p["out_end_s"]] for p in shown if p["preview"] or p["speed"] > 1],
             "labels": labels,
+            "captions": [{"step": c["step"], "text": " ".join(c["lines"]), "out_start_s": c["out_start_s"],
+                          "out_end_s": c["out_end_s"]} for c in captions],
+            "zoom": {"max": ZOOM_MAX, "max_upscale": ZOOM_MAX_UPSCALE, "ease_s": ZOOM_EASE_S,
+                     "caps": {take_name(f): round(i["zoom_cap"], 3) for f, i in infos.items()},
+                     "regions": [{"take": f, "change_s": c, "zoom": round(v[0], 3), "centre": [round(v[1]), round(v[2])]}
+                                 for (f, c), v in regions.items() if v]},
             "redaction": {"secrets_found": len(seen), "counts": counts,
                           "boxes_drawn": sum(len(st["findings"]) for st in red_stretches),
                           "frames_read": sum(len(st["read_at_s"]) for st in red_stretches),
@@ -580,28 +1000,38 @@ def main():
         }
         make_proof_card(log, thumbs, card_path)
 
-        print(f"Rendering {len(pieces)} piece(s)...")
+        print(f"Rendering {len(shown)} piece(s)...")
         clock_start = time.time()
-        label_paths = {}
-        for i, text in enumerate(dict.fromkeys(text for p in pieces for text, _, _ in p["labels"])):
-            label_paths[text] = os.path.join(work, f"label{i}.png")
-            render_label(text, label_paths[text])
-        parts = []
-        if args.title_card:
-            parts.append(os.path.join(work, "title.mkv"))
-            render_still(resolve(args.title_card, os.getcwd()), title_s, parts[-1])
-        for i, p in enumerate(pieces):
-            parts.append(os.path.join(work, f"piece{i:03d}.mkv"))
-            # Sped-up waits are muted. The take audio elsewhere is kept (ducked under narration in join_parts).
-            render_piece(p, norm_paths[p["take"]], red_stretches, label_paths, p["speed"] > 1, parts[-1])
+        overlay_paths = {}
+        for i, text in enumerate(dict.fromkeys(text for p in shown for text, _, _ in p["labels"])):
+            overlay_paths[text] = os.path.join(work, f"label{i}.png")
+            render_label(text, overlay_paths[text])
+        for i, c in enumerate(captions):
+            c["png"] = os.path.join(work, f"caption{i}.png")
+            render_caption(c["lines"], c["png"])
+        parts, zoomed = [], []
+        for p in shown:
+            if p is pieces[0] and args.title_card:
+                parts.append(os.path.join(work, "title.mkv"))
+                render_still(resolve(args.title_card, os.getcwd()), title_s, parts[-1])
+            parts.append(os.path.join(work, f"piece{len(parts):03d}.mkv"))
+            overlays = [(overlay_paths[text], t0, t1, "label") for text, t0, t1 in p["labels"]]
+            for c in captions:
+                a, b = max(c["out_start_s"], p["out_start_s"]), min(c["out_end_s"], p["out_end_s"])
+                if b > a and not p["preview"]:
+                    overlays.append((c["png"], a - p["out_start_s"], b - p["out_start_s"], "caption"))
+            # The preview and sped-up waits are muted. The take audio elsewhere is kept (ducked under narration).
+            flags = render_piece(p, infos[p["take"]], red_stretches, overlays, p["preview"] or p["speed"] > 1, parts[-1])
+            zoomed += spans(flags, p["out_start_s"])
         parts.append(os.path.join(work, "proof.mkv"))
         render_still(card_path, PROOF_SECONDS, parts[-1])
-        join_parts(parts, narration, total, work, video_path)
+        join_parts(parts, narration, args.music, total, work, video_path)
         render_s = time.time() - clock_start
+        log["zoomed_out_s"] = zoomed
 
-    log["timings_s"] = {"normalise": round(normalise_s, 1), "redaction_ocr": round(ocr_s, 1),
-                        "render_and_join": round(render_s, 1), "total": round(time.time() - started, 1),
-                        "render_per_output_minute": round(render_s / (total / 60), 1)}
+    log["timings_s"] = {"normalise": round(normalise_s, 1), "find_changes": round(zoom_s, 1),
+                        "redaction_ocr": round(ocr_s, 1), "render_and_join": round(render_s, 1),
+                        "total": round(time.time() - started, 1), "render_per_output_minute": round(render_s / (total / 60), 1)}
     leak = {"video": video_path, "created": stamp, **log["redaction"],
             "note": "Boxes from each stable stretch stay on screen until the next screen change "
                     f"(plus {BOX_MARGIN_SECONDS} s either side). Previews are masked; no secret is stored here.",
