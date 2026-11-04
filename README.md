@@ -3,6 +3,7 @@
 **A demo-video companion for solo hackathon builders: it plans the demo from day one, checks your takes, boxes out secrets locally, and cuts an honestly labelled video.**
 
 Built for the Meta Global AI Developer Hackathon (Indie track).
+Youtube: https://youtu.be/HSznqqW_oPA
 
 ## What it is
 
