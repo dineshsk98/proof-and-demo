@@ -105,7 +105,7 @@ function showTakesJobs() {
   const status = document.getElementById("check-status");
   if (!status) return; // the form isn't drawn (no checklists)
   const job = jobs.check;
-  document.getElementById("check-button").disabled = job.state === "running";
+  setBusy(document.getElementById("check-button"), job.state === "running");
   status.className = "job-status " + (notices.check ? "failed" : job.state);
   status.textContent = notices.check || jobText(job, `Checking ${(job.takes || []).join(", ")} against ${job.checklist}. Redacting a frame takes about 17 s.`);
 }
@@ -178,7 +178,8 @@ function verdictRow(step) {
   body.append(el("p", "meta", `${frameLabel} · kept stretch ${seconds(step.start_s)} to ${seconds(step.end_s)}`));
   body.append(el("p", "step-end", step.expected_end_state));
   for (const vote of step.votes) {
-    body.append(el("p", "vote", `${vote.order}: ${vote.verdict}${vote.frame ? " at " + vote.frame : ""}. ${vote.reason}`));
+    // vote.model names who voted (a check made before models were recorded has none)
+    body.append(el("p", "vote", `${vote.model ? vote.model + " " : ""}${vote.order}: ${vote.verdict}${vote.frame ? " at " + vote.frame : ""}. ${vote.reason}`));
   }
   row.append(body);
   return row;

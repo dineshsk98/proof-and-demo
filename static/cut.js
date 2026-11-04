@@ -3,7 +3,7 @@
 // variantIndex from there, and fileUrl, baseName, labelled and seconds from takes.js.
 
 // What is ticked and typed on this page, so a redraw (after a job finishes) doesn't throw it away.
-const cutPick = { check: "", narration: false, titleCard: false, title: "", subtitle: "", reuse: true };
+const cutPick = { check: "", narration: false, titleCard: false, captions: true, music: "", title: "", subtitle: "", reuse: true };
 
 function clock(totalSeconds) {
   const whole = Math.round(totalSeconds);
@@ -133,13 +133,32 @@ function cutPanel() {
     checkbox(files.title_card ? "Add the title card for the first seconds" : "Add the title card (none made yet)", cutPick.titleCard && files.title_card, !files.title_card, (v) => (cutPick.titleCard = v)),
   );
 
+  // Captions are the narration text of the storyline's steps, so they need the storyline on screen.
+  card.append(checkbox(storyline ? `Captions from variant ${variantIndex + 1} of ${storyline.file}` : "Captions (no storyline yet)", cutPick.captions && !!storyline, !storyline, (v) => (cutPick.captions = v)));
+
+  const music = el("select");
+  music.id = "cut-music";
+  const noMusic = el("option", null, files.music.length > 0 ? "No music" : "No music (none in workspace/assets/music yet)");
+  noMusic.value = "";
+  music.append(noMusic);
+  for (const name of files.music) {
+    const option = el("option", null, name);
+    option.value = name;
+    music.append(option);
+  }
+  music.value = files.music.includes(cutPick.music) ? cutPick.music : "";
+  cutPick.music = music.value;
+  music.addEventListener("change", () => (cutPick.music = music.value));
+  card.append(labelled("Music bed", music));
+
   const buttons = el("div", "actions");
   const button = el("button", null, "Cut video");
   button.id = "cut-button";
   button.type = "button";
   button.addEventListener("click", () => {
     const narration = cutPick.narration && newestNarration ? newestNarration : "";
-    postJob("cut", `/api/cut?check=${encodeURIComponent(cutPick.check)}&narration=${encodeURIComponent(narration)}&title_card=${cutPick.titleCard && files.title_card}`);
+    const story = cutPick.captions && storyline ? `&storyline=${encodeURIComponent(storyline.file)}&variant=${variantIndex + 1}` : "";
+    postJob("cut", `/api/cut?check=${encodeURIComponent(cutPick.check)}&narration=${encodeURIComponent(narration)}&title_card=${cutPick.titleCard && files.title_card}&music=${encodeURIComponent(cutPick.music)}${story}`);
   });
   buttons.append(button);
   const progress = el("progress");
@@ -207,15 +226,13 @@ function showCutJobs() {
     status.className = "job-status " + (notices[kind] ? "failed" : job.state);
     status.textContent = notices[kind] || jobText(job, kind === "assets" ? `Making “${job.title}”.` : `Narrating variant ${job.variant} of ${job.storyline}.`);
   }
-  const assetsButton = document.getElementById("assets-button");
-  if (assetsButton) assetsButton.disabled = jobs.assets.state === "running";
-  const narrateButton = document.getElementById("narrate-button");
-  if (narrateButton) narrateButton.disabled = jobs.narrate.state === "running" || !storyline || !!files.narration_problem;
+  setBusy(document.getElementById("assets-button"), jobs.assets.state === "running");
+  setBusy(document.getElementById("narrate-button"), jobs.narrate.state === "running", !storyline || !!files.narration_problem);
 
   const status = document.getElementById("cut-status");
   if (!status) return; // no take check yet, so no cut form
   const job = jobs.cut;
-  document.getElementById("cut-button").disabled = job.state === "running";
+  setBusy(document.getElementById("cut-button"), job.state === "running");
   status.className = "job-status " + (notices.cut ? "failed" : job.state);
   status.textContent = notices.cut || jobText(job, `Cutting ${job.check}.`);
 

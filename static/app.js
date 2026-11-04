@@ -4,7 +4,8 @@ let checklist = null; // same shape from /api/checklist for the variant shown, o
 let files = null; // what /api/files lists: checklists, takes, checks, narrations, assets
 let latestCheck = null; // same shape from /api/check, or null
 let latestCut = null; // same shape from /api/cut, or null
-let variantIndex = 0; // which storyline variant is picked
+let storylines = []; // every storyline file, from /api/storylines: [{file, modified, kind, variants}]
+let variantIndex = 0; // which variant of the active storyline file is picked (it comes from the server, which keeps the choice)
 
 // The order the readiness board shows its groups in.
 const STATUS_ORDER = ["missing", "partly works", "works", "flaky"];
@@ -56,11 +57,13 @@ function renderStoryline() {
     return;
   }
 
-  const variants = storyline.data.variants;
+  const variants = (storyEdit.on ? storyEdit.draft : storyline.data).variants;
   if (variantIndex >= variants.length) variantIndex = 0;
   const variant = variants[variantIndex];
 
   root.append(pageHeading("Demo storyline", `${storyline.file} · written ${storyline.modified} · ${variants.length} variant${variants.length === 1 ? "" : "s"}`));
+  root.append(storylinePicker());
+  if (switchPending()) root.append(switchPrompt());
 
   const picker = el("div", "picker");
   variants.forEach((v, i) => {
@@ -68,7 +71,9 @@ function renderStoryline() {
     button.type = "button";
     button.append(el("strong", null, `${i + 1}. ${v.structure}`), el("span", null, `${totalSeconds(v)} s`));
     button.addEventListener("click", async () => {
+      if (!storyEdit.on) await chooseStoryline(storyline.file, i + 1); // kept on the server: the whole app works from this variant
       variantIndex = i;
+      showActiveLine();
       renderStoryline();
       await loadChecklist(); // the board shows the checklist made for the variant on screen
       renderReadiness();
@@ -77,6 +82,7 @@ function renderStoryline() {
     picker.append(button);
   });
   root.append(picker);
+  root.append(storyActions());
 
   const hook = el("div", "card hook");
   hook.append(el("h3", null, "Hook"), el("p", null, variant.hook));
@@ -90,10 +96,12 @@ function renderStoryline() {
   }
   root.append(moments);
 
-  root.append(el("h3", "section-title", `Steps · ${totalSeconds(variant)} s of 180`));
+  root.append(withId(el("h3", "section-title", `Steps · ${totalSeconds(variant)} s of 180`), "story-total"));
   for (const step of variant.steps) {
-    root.append(stepCard(step));
+    root.append(storyEdit.on ? editStepCard(step) : stepCard(step));
   }
+  if (!storyEdit.on) root.append(revisePanel());
+  showStoryJobs();
 }
 
 function stepCard(step) {
@@ -235,7 +243,7 @@ function listCard(title, items) {
 
 // ---------- Jobs: draft, voice note, update progress ----------
 
-const KINDS = ["draft", "voice", "update", "check", "cut", "assets", "narrate"];
+const KINDS = ["draft", "voice", "update", "check", "cut", "assets", "narrate", "plan", "write", "speak", "improve", "revise"];
 let jobs = Object.fromEntries(KINDS.map((kind) => [kind, { state: "idle", lines: [] }])); // latest from /api/jobs
 let notices = Object.fromEntries(KINDS.map((kind) => [kind, ""])); // why a job could not even start (a 400 or 409 from the server)
 let recorder = null; // a MediaRecorder while a voice note is being recorded
@@ -304,20 +312,48 @@ function formatTime(milliseconds) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-// What a job's status line says: its headline, then everything the script printed, then any error.
+const JOB_NAMES = {
+  draft: "Draft storyline", voice: "Voice note", update: "Update progress", check: "Check takes", cut: "Cut video", assets: "Title card",
+  narrate: "Narrate steps", plan: "Plan cut", write: "Write narration", speak: "Narrate script", improve: "Improve lines", revise: "Revise storyline",
+};
+const QUIET_SECONDS = 60; // a job that has printed nothing for this long says so, so it never looks frozen
+let polledAt = Date.now(); // when /api/jobs was last read: the timers count on from there, between polls
+
+// What a job's status line says. Running: its name and a timer (m:ss, redrawn every second), a note, the latest line
+// it printed, and a warning when it has been quiet for a minute. Finished: the time, everything it printed, any error.
+// The spinner is drawn by the stylesheet on a status with the class "running".
 function jobText(job, runningNote) {
   if (job.state === "idle") return "";
-  // While it runs, the last lines the script printed show its progress.
-  if (job.state === "running") return [`Running… ${job.seconds} s. ${runningNote}`, ...job.lines.slice(-2)].join("\n");
-  const headline = job.state === "done" ? `Finished in ${job.seconds} s.` : `Failed after ${job.seconds} s.`;
+  if (job.state === "running") {
+    const passed = (Date.now() - polledAt) / 1000;
+    const quiet = Math.floor((job.quiet_seconds || 0) + passed);
+    const name = job.kind === "cut" && job.render ? "Render" : JOB_NAMES[job.kind] || job.kind;
+    return [
+      `Running · ${name} · ${formatTime(((job.seconds || 0) + passed) * 1000)}`,
+      runningNote,
+      job.lines[job.lines.length - 1],
+      quiet > QUIET_SECONDS ? `No output for ${quiet} s; still running` : "",
+    ].filter(Boolean).join("\n");
+  }
+  const headline = job.state === "done" ? `Done in ${formatTime(job.seconds * 1000)}` : `Failed after ${formatTime(job.seconds * 1000)}`;
   return [headline, ...job.lines, job.message].filter(Boolean).join("\n");
+}
+
+// The button that started a job: off and saying "Running…" while it runs, its own label otherwise.
+// otherwiseOff keeps it off for another reason (nothing to run on yet).
+function setBusy(button, running, otherwiseOff = false, label) {
+  if (!button) return;
+  if (label !== undefined) button.dataset.label = label;
+  else if (!button.dataset.label) button.dataset.label = button.textContent;
+  button.textContent = running ? "Running…" : button.dataset.label;
+  button.disabled = running || otherwiseOff;
 }
 
 // Redraws every job's button and status from the latest jobs, notices and recording state.
 function showJobs() {
   const { draft, voice, update } = jobs;
 
-  draftButton.disabled = draft.state === "running";
+  setBusy(draftButton, draft.state === "running");
   const draftText = notices.draft || jobText(draft, `Live Muse Spark call on ${draft.idea} and ${draft.judging}; it can take several minutes.`);
   if (draftText) {
     draftStatus.className = notices.draft ? "failed" : draft.state;
@@ -328,7 +364,7 @@ function showJobs() {
   if (!voiceStatus) return; // the readiness page isn't drawn yet
   const voiceBusy = voice.state === "running" || recorder !== null;
   document.getElementById("record-button").disabled = voiceBusy;
-  document.getElementById("upload-button").disabled = voiceBusy;
+  setBusy(document.getElementById("upload-button"), voice.state === "running", recorder !== null);
   document.getElementById("stop-button").hidden = recorder === null;
   let voiceText = notices.voice || jobText(voice, `Converting and transcribing ${voice.audio}.`);
   let voiceClass = notices.voice ? "failed" : voice.state;
@@ -345,7 +381,7 @@ function showJobs() {
   transcript.hidden = !(voice.state === "done" && voice.transcript);
   transcript.textContent = voice.transcript || "";
 
-  document.getElementById("update-button").disabled = update.state === "running" || !storyline;
+  setBusy(document.getElementById("update-button"), update.state === "running", !storyline);
   document.getElementById("update-target").textContent = storyline
     ? `Uses variant ${variantIndex + 1} of ${storyline.file}, the one shown on the Storyline page.`
     : "Needs a storyline first.";
@@ -355,6 +391,8 @@ function showJobs() {
 
   showTakesJobs();
   showCutJobs();
+  showScriptJobs();
+  showStoryJobs();
 }
 
 // Starts a job on the server. A refusal (400, 409) becomes a notice on that job's status line.
@@ -362,7 +400,8 @@ async function postJob(kind, url, body) {
   notices[kind] = "";
   const response = await fetch(url, { method: "POST", body });
   const reply = await response.json();
-  if (!response.ok) notices[kind] = reply.error || JSON.stringify(reply.detail);
+  // A 409 means the job is already running (started from another page): its panel shows that, so it needs no notice.
+  if (!response.ok && response.status !== 409) notices[kind] = reply.error || JSON.stringify(reply.detail);
   showJobs();
   pollJobs();
 }
@@ -377,10 +416,15 @@ async function pollJobs() {
   }
   const before = jobs;
   jobs = latest;
+  polledAt = Date.now();
   showJobs();
   // A finished job wrote a new file, which is the newest, so reloading shows it.
   for (const kind of KINDS) {
-    if (before[kind].state === "running" && latest[kind].state === "done") await loadData();
+    if (before[kind].state === "running" && latest[kind].state === "done") {
+      await loadData();
+      await afterScriptJob(kind);
+      afterStorylineJob(kind);
+    }
   }
 }
 
@@ -420,7 +464,7 @@ function startUpdate() {
 
 // ---------- Start-up ----------
 
-const PAGES = ["storyline", "readiness", "takes", "cut"];
+const PAGES = ["storyline", "readiness", "takes", "script", "cut"];
 
 function showPage() {
   const page = PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "storyline";
@@ -436,15 +480,32 @@ async function loadChecklist() {
   checklist = await getJson("/api/checklist" + which);
 }
 
+// The small line under the top bar on every page: which storyline file and variant everything works from.
+function showActiveLine() {
+  const line = document.getElementById("active-line");
+  if (!storyline) {
+    line.textContent = "Storyline: none yet";
+    return;
+  }
+  line.textContent = `Storyline: ${storyline.file.replace(/\.json$/, "")} · variant ${variantIndex + 1}`
+    + (storyline.chosen ? "" : " (the newest file; nothing chosen yet)")
+    + (switchPending() ? ` · a new file is ready: ${storyEdit.pendingSwitch.file.replace(/\.json$/, "")} (see the Storyline page)` : "");
+}
+
 async function loadData() {
   storyline = await getJson("/api/storyline");
+  if (storyline) variantIndex = storyline.variant - 1; // the server keeps which variant was chosen
+  storylines = await getJson("/api/storylines");
+  showActiveLine();
   await loadChecklist();
   files = await getJson("/api/files");
   latestCheck = await getJson("/api/check");
   latestCut = await getJson("/api/cut");
+  await loadScripts(false);
   renderStoryline();
   renderReadiness();
   renderTakes();
+  renderScript();
   renderCut();
 }
 
@@ -454,3 +515,4 @@ showPage();
 loadData();
 pollJobs(); // picks up a job that is already running, or shows the last result
 setInterval(pollJobs, 2000);
+setInterval(showJobs, 1000); // keeps every running job's timer ticking between polls
