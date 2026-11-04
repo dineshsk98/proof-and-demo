@@ -16,9 +16,10 @@ from env import load_env_file
 from redact import redact_image
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
+THIRD_MODEL = "muse-spark-1.1"  # an older Spark for the independent third vote; standard tier, never "-contributor"
 BASE_URL = "https://api.meta.ai/v1"
 MAX_OUTPUT_TOKENS = 8000  # a few verdicts, plus reasoning
-PRICE_IN, PRICE_OUT = 1.25, 4.25  # USD per million tokens, standard tier (reasoning bills as output)
+PRICE_IN, PRICE_OUT = 1.25, 4.25  # USD per million tokens, standard tier, same for 1.1 and 1.3 (reasoning bills as output)
 
 # Frame comparison: all local and free. Measured on the web app's own 1080p screenshots at 320x180:
 # a page change alters 5-15% of pixels, a small "Saved" toast ~0.5%, a ticking "12 s" counter ~0.03%,
@@ -33,7 +34,9 @@ WAIT_MIN_S = 4.0  # a quiet stretch at least this long that ends in a change is 
 SETTLE_S = 1.0  # the frame sent for a change is taken this long after it, so the screen has settled
 MAX_FRAMES = 10  # frames sent per take; each takes ~17 s to redact on CPU
 
-VOTES = 2  # independent checks per take; "unsure" when they disagree (spec §7)
+# Independent checks per take, as (model, frame order): 1.3 forward, 1.3 reversed, and 1.1 forward.
+# A step passes when at least 2 of the 3 find its end state, and is "unsure" when only 1 does (spec §7).
+VOTES = [(MODEL, "forward"), (MODEL, "reverse"), (THIRD_MODEL, "forward")]
 SEND_WIDTH = 1280  # frames are redacted at full size, then shrunk to this width to send
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -180,8 +183,8 @@ def format_steps(steps):
     return "\n".join(f"{s['number']}. {s['title']}\n   Expected end state: {s['expected_end_state']}" for s in steps)
 
 
-def ask_spark(client, steps, frames, order, raw_base):
-    # One check of every step against the take's frames. Returns ({number: vote}, usage).
+def ask_spark(client, model, steps, frames, order, raw_base):
+    # One check of every step against the take's frames, by one model. Returns ({number: vote}, usage).
     # frames: [{"label", "time_s", "sent_path"}] in time order; order "reverse" sends them last first.
     sent = frames if order == "forward" else list(reversed(frames))
     labels = [f["label"] for f in frames]
@@ -195,14 +198,14 @@ def ask_spark(client, steps, frames, order, raw_base):
         content.append({"type": "input_image", "image_url": image_data_url(f["sent_path"])})
 
     response = client.responses.create(
-        model=MODEL,
+        model=model,
         input=[{"type": "message", "role": "user", "content": content}],
         max_output_tokens=MAX_OUTPUT_TOKENS,  # reasoning tokens count toward this
         text={"format": {"type": "json_schema", "name": "take_check",
                          "schema": build_schema(step_numbers, labels), "strict": True}},
     )
     usage = response.usage
-    print(f"  vote {order}: tokens input={usage.input_tokens} output={usage.output_tokens}")
+    print(f"  vote {model} {order}: tokens input={usage.input_tokens} output={usage.output_tokens}")
     reply = response.output_text
     try:
         data = json.loads(reply)
@@ -215,38 +218,42 @@ def ask_spark(client, steps, frames, order, raw_base):
         # A broken reply is a vote that can't agree with anything, so the step goes to "unsure".
         with open(raw_base + "-raw.txt", "w", encoding="utf-8") as f:
             f.write(reply or "")
-        print(f"  vote {order} failed checks: {error}. Raw reply saved to {raw_base}-raw.txt")
-        return {n: {"order": order, "verdict": "invalid", "frames": [], "frame": None, "reason": error}
-                for n in step_numbers}, usage
+        print(f"  vote {model} {order} failed checks: {error}. Raw reply saved to {raw_base}-raw.txt")
+        return {n: {"model": model, "order": order, "verdict": "invalid", "frames": [], "frame": None,
+                    "reason": error} for n in step_numbers}, usage
     votes = {}
     for s in data["steps"]:
         # The verdict comes from the list, not from the model: pass means at least one frame shows it.
         shown = sorted(set(s["shown_in"]), key=labels.index)  # time order
         if shown:
-            votes[s["number"]] = {"order": order, "verdict": "pass", "frames": shown, "frame": shown[0],
-                                  "reason": s["reason"]}
+            votes[s["number"]] = {"model": model, "order": order, "verdict": "pass", "frames": shown,
+                                  "frame": shown[0], "reason": s["reason"]}
         else:
-            votes[s["number"]] = {"order": order, "verdict": "fail", "frames": [], "frame": s["break_frame"],
-                                  "reason": s["reason"]}
+            votes[s["number"]] = {"model": model, "order": order, "verdict": "fail", "frames": [],
+                                  "frame": s["break_frame"], "reason": s["reason"]}
     return votes, usage
 
 
 def decide(votes, frame_times):
-    # Each vote answers "does ANY frame show the end state?". Every vote must give the same answer,
-    # or the step is "unsure". Never a guess (spec §7).
-    # Returns (verdict, proof_label, break_label). On a pass, the proof is the earliest frame every
-    # vote listed; if they listed different frames, the earliest frame any vote listed.
+    # Each vote answers "does ANY frame show the end state?". Of the 3 votes: pass if at least 2 find it,
+    # fail if none does, "unsure" if exactly 1 does. Never a guess (spec §7).
+    # A vote whose reply failed its checks ("invalid") finds nothing, but it isn't a fail either:
+    # a fail still needs at least 2 votes that looked and found nothing.
+    # Returns (verdict, proof_label, break_label). On a pass, the proof is the earliest frame that at
+    # least 2 passing votes listed; if no frame has 2, the earliest frame any passing vote listed.
     def earliest(verdict):
         labels = [v["frame"] for v in votes if v["verdict"] == verdict]
         return min(labels, key=lambda label: frame_times[label]) if labels else None
 
-    verdicts = {v["verdict"] for v in votes}
-    if verdicts == {"pass"}:
-        agreed = set.intersection(*[set(v["frames"]) for v in votes])
+    passes = [v for v in votes if v["verdict"] == "pass"]
+    fails = [v for v in votes if v["verdict"] == "fail"]
+    if len(passes) >= 2:
+        listed = [label for v in passes for label in v["frames"]]
+        agreed = [label for label in set(listed) if listed.count(label) >= 2]
         if agreed:
             return "pass", min(agreed, key=lambda label: frame_times[label]), None
         return "pass", earliest("pass"), None
-    if verdicts == {"fail"}:
+    if not passes and len(fails) >= 2:
         return "fail", None, earliest("fail")
     return "unsure", earliest("pass"), earliest("fail")
 
@@ -296,9 +303,8 @@ def check_take(client, take_path, steps, run_dir, frames_only=False):
 
     votes_by_step = {s["number"]: [] for s in steps}
     usages = []
-    for k in range(VOTES):
-        order = "forward" if k % 2 == 0 else "reverse"
-        votes, usage = ask_spark(client, steps, frames, order, os.path.join(run_dir, f"{stem}-vote{k + 1}"))
+    for k, (model, order) in enumerate(VOTES):
+        votes, usage = ask_spark(client, model, steps, frames, order, os.path.join(run_dir, f"{stem}-vote{k + 1}"))
         usages.append(usage)
         for number, vote in votes.items():
             votes_by_step[number].append(vote)
@@ -319,7 +325,7 @@ def check_take(client, take_path, steps, run_dir, frames_only=False):
     for i, d in enumerate(decided):
         step, t = d["step"], d["t"]
         if t is None:
-            start_s, end_s = 0.0, duration  # no usable frame: both votes failed their checks
+            start_s, end_s = 0.0, duration  # no usable frame: every vote failed its checks
         else:
             # The stretch runs from the end of the previous step to where the next step's evidence starts
             # (the earliest later frame that decided a following step), or to the end of the take.
@@ -355,7 +361,8 @@ def pick_best(takes, steps):
                 if s["number"] == n and s["verdict"] == "pass":
                     passes.append((s["end_s"] - s["start_s"], take, s))
                 if s["number"] == n and s["verdict"] == "unsure":
-                    said = "; ".join(f"{v['order']}: {v['verdict']} at {v['frame']} ({v['reason']})" for v in s["votes"])
+                    said = "; ".join(f"{v['model']} {v['order']}: {v['verdict']} at {v['frame']} ({v['reason']})"
+                                     for v in s["votes"])
                     frame = s["proof_frame"] or s["break_frame"]
                     questions.append(f"Take {os.path.basename(take['file'])}, step {n}: the checks disagreed ({said}). "
                                      f"Does {frame or 'the take'} show: {step['expected_end_state']}")
@@ -400,7 +407,7 @@ def main():
     stamp = f"{datetime.now():%Y-%m-%d-%H%M%S}"
     run_dir = os.path.join(args.out_dir, stamp)
     os.makedirs(run_dir, exist_ok=True)
-    print(f"Checking {len(args.takes)} take(s) against steps {[s['number'] for s in steps]}, {VOTES} votes each")
+    print(f"Checking {len(args.takes)} take(s) against steps {[s['number'] for s in steps]}, {len(VOTES)} votes each")
     # The only things sent to Meta: the prompt, each step's number, title and expected end state,
     # and the take's frames after local redaction, shrunk to SEND_WIDTH.
     takes = []

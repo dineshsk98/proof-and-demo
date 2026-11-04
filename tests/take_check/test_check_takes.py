@@ -95,21 +95,37 @@ def test_frame_times():
 
 
 def test_decide():
-    times = {"F1": 0.0, "F2": 4.0, "F3": 16.0}
-    v = lambda verdict, frame, frames=None: {"order": "x", "verdict": verdict, "reason": "", "frame": frame,
+    times = {"F1": 0.0, "F2": 4.0, "F3": 16.0, "F4": 31.0, "F7": 119.0}
+    v = lambda verdict, frame, frames=None: {"model": "m", "order": "x", "verdict": verdict, "reason": "",
+                                             "frame": frame,
                                              "frames": frames or ([frame] if verdict == "pass" else [])}
-    assert check_takes.decide([v("pass", "F3"), v("pass", "F2")], times) == ("pass", "F2", None)
-    # The earliest frame both votes listed wins over an earlier frame only one listed.
-    assert check_takes.decide([v("pass", "F2", ["F2", "F3"]), v("pass", "F3")], times) == ("pass", "F3", None)
-    assert check_takes.decide([v("fail", "F3"), v("fail", "F3")], times) == ("fail", None, "F3")
-    assert check_takes.decide([v("pass", "F3"), v("fail", "F2")], times) == ("unsure", "F3", "F2")
-    assert check_takes.decide([v("pass", "F3"), v("invalid", None)], times) == ("unsure", "F3", None)
+    decide = check_takes.decide
+    # The proof is the earliest frame at least 2 passing votes listed, even if the third didn't list it.
+    assert decide([v("pass", "F4", ["F4", "F7"]), v("pass", "F4", ["F4", "F7"]), v("pass", "F7")],
+                  times) == ("pass", "F4", None)
+    # Only one vote listed F4, so the earliest frame with 2 votes is F7.
+    assert decide([v("pass", "F4", ["F4", "F7"]), v("pass", "F7"), v("pass", "F7")], times) == ("pass", "F7", None)
+    # F3 has 2 votes and wins over the earlier F2, which has only 1.
+    assert decide([v("pass", "F3"), v("pass", "F2"), v("pass", "F3")], times) == ("pass", "F3", None)
+    assert decide([v("pass", "F2", ["F2", "F3"]), v("pass", "F3"), v("fail", "F1")], times) == ("pass", "F3", None)
+    # No frame has 2 votes: the earliest frame any passing vote listed.
+    assert decide([v("pass", "F3"), v("pass", "F2"), v("fail", "F1")], times) == ("pass", "F2", None)
+    # 2 of 3 is a pass; the one vote that found nothing doesn't block it, and gives no break frame.
+    assert decide([v("pass", "F3"), v("fail", "F2"), v("pass", "F3")], times) == ("pass", "F3", None)
+    assert decide([v("fail", "F3"), v("fail", "F2"), v("fail", "F3")], times) == ("fail", None, "F2")
+    # Exactly 1 of 3 is unsure.
+    assert decide([v("pass", "F3"), v("fail", "F2"), v("fail", "F3")], times) == ("unsure", "F3", "F2")
+    # A broken vote: 2 passes or 2 fails still decide; otherwise unsure.
+    assert decide([v("pass", "F3"), v("invalid", None), v("pass", "F3")], times) == ("pass", "F3", None)
+    assert decide([v("fail", "F3"), v("invalid", None), v("fail", "F3")], times) == ("fail", None, "F3")
+    assert decide([v("pass", "F3"), v("invalid", None), v("fail", "F2")], times) == ("unsure", "F3", "F2")
+    assert decide([v("fail", "F3"), v("invalid", None), v("invalid", None)], times) == ("unsure", None, "F3")
 
 
 def test_agreeing_votes():
     REDACTED.clear()
     good = reply(["F3"], ["F4"], "F5")
-    take, calls, run_dir = run_check([good, good])
+    take, calls, run_dir = run_check([good, good, good])
     verdicts = [s["verdict"] for s in take["steps"]]
     assert verdicts == ["pass", "pass", "fail"], verdicts
     s1, s2, s3 = take["steps"]
@@ -122,23 +138,28 @@ def test_agreeing_votes():
     assert s1["start_s"] == 0.0 and near(s1["end_s"], time_of["F4"]), s1
     assert s2["start_s"] == s1["end_s"] and near(s2["end_s"], time_of["F5"]), s2
     assert s3["start_s"] == s2["end_s"] and near(s3["end_s"], take["duration_s"]), s3
-    assert len(s1["votes"]) == check_takes.VOTES
+    # Every vote records its model and frame order.
+    assert [(v["model"], v["order"]) for v in s1["votes"]] == [
+        ("muse-spark-1.3", "forward"), ("muse-spark-1.3", "reverse"), ("muse-spark-1.1", "forward")], s1["votes"]
 
     # Only redacted frames are sent, and no raw frame is left on disk.
+    # All three votes get the same frames and prompt; only the order and the model differ.
     assert len(REDACTED) == 5, REDACTED
     assert not [p for p in os.listdir(run_dir) if p.endswith("-raw.png")]
-    assert len(calls) == check_takes.VOTES
+    assert [call["model"] for call in calls] == ["muse-spark-1.3", "muse-spark-1.3", "muse-spark-1.1"], calls
+    assert calls[0]["input"] == calls[2]["input"] and calls[0]["text"] == calls[2]["text"]
     for call in calls:
-        assert call["model"] == "muse-spark-1.3" and call["max_output_tokens"] == check_takes.MAX_OUTPUT_TOKENS
+        assert "contributor" not in call["model"] and call["max_output_tokens"] == check_takes.MAX_OUTPUT_TOKENS
         content = call["input"][0]["content"]
         assert sum(1 for c in content if c["type"] == "input_image") == 5
         assert "Expected end state: Click Draft storyline" in content[0]["text"]
         assert "does ANY frame show its end state?" in content[0]["text"]
         assert "{{" not in content[0]["text"]
-    # The second check sends the frames in reverse order.
+    # The second check sends the frames in reverse order; the third (1.1) in forward order.
     labels = lambda call: [c["text"].split()[1] for c in call["input"][0]["content"][1:] if c["type"] == "input_text"]
     assert labels(calls[0]) == ["F1", "F2", "F3", "F4", "F5"], labels(calls[0])
     assert labels(calls[1]) == ["F5", "F4", "F3", "F2", "F1"], labels(calls[1])
+    assert labels(calls[2]) == ["F1", "F2", "F3", "F4", "F5"], labels(calls[2])
     # The schema only allows frames that were sent.
     step_schema = calls[0]["text"]["format"]["schema"]["properties"]["steps"]["items"]["properties"]
     assert step_schema["shown_in"]["items"]["enum"] == ["F1", "F2", "F3", "F4", "F5"]
@@ -155,35 +176,65 @@ def test_votes_on_different_frames_pass():
     # Both checks say it's shown, but in different frames. That is agreement: pass, with the earliest frame.
     first = reply(["F3"], ["F4"], "F5")
     second = reply(["F3"], ["F4", "F5"], "F5")
-    take, _, _ = run_check([first, second])
+    third = reply(["F3"], ["F4", "F5"], "F5")
+    take, _, _ = run_check([first, second, third])
     s2 = take["steps"][1]
     assert s2["verdict"] == "pass" and s2["proof_frame"].endswith("F4.png") and s2["break_frame"] is None, s2
-    assert [v["frames"] for v in s2["votes"]] == [["F4"], ["F4", "F5"]], s2["votes"]
-    # No frame in common: still a pass, with the earliest frame either check listed.
-    second = reply(["F3"], ["F5"], "F5")
-    take, _, _ = run_check([first, second])
+    assert [v["frames"] for v in s2["votes"]] == [["F4"], ["F4", "F5"], ["F4", "F5"]], s2["votes"]
+    # 2 votes list F4 and the third only F5: the proof is F4, and step 2's stretch starts there.
+    only_later = reply(["F3"], ["F5"], "F5")
+    take, _, _ = run_check([second, third, only_later])
+    s2 = take["steps"][1]
+    assert s2["verdict"] == "pass" and s2["proof_frame"].endswith("F4.png"), s2
+    # Only 1 vote lists F4: the earliest frame with 2 votes is F5.
+    take, _, _ = run_check([second, only_later, only_later])
+    s2 = take["steps"][1]
+    assert s2["verdict"] == "pass" and s2["proof_frame"].endswith("F5.png"), s2
+    # No frame has 2 votes: still a pass, with the earliest frame any passing check listed.
+    misses = reply(["F3"], "F4", "F5")
+    take, _, _ = run_check([first, only_later, misses])
     s2 = take["steps"][1]
     assert s2["verdict"] == "pass" and s2["proof_frame"].endswith("F4.png"), s2
 
 
+def test_two_of_three_pass():
+    # The take-02 flip: one 1.3 check finds step 2's end state, the other doesn't. The 1.1 vote decides it.
+    finds = reply(["F3"], ["F4"], "F5")
+    misses = reply(["F3"], "F4", "F5")
+    take, _, _ = run_check([finds, misses, finds])
+    s2 = take["steps"][1]
+    assert s2["verdict"] == "pass" and s2["proof_frame"].endswith("F4.png") and s2["break_frame"] is None, s2
+    assert [v["verdict"] for v in s2["votes"]] == ["pass", "fail", "pass"], s2["votes"]
+    take, _, _ = run_check([finds, misses, misses])
+    assert take["steps"][1]["verdict"] == "unsure", take["steps"][1]
+
+
 def test_disagreeing_votes_are_unsure():
+    # Exactly 1 of 3 finds it.
     first = reply(["F3"], ["F4"], "F5")
     second = reply(["F3"], "F4", "F5")
-    take, _, _ = run_check([first, second])
+    take, _, _ = run_check([first, second, second])
     s2 = take["steps"][1]
     assert s2["verdict"] == "unsure", s2
     assert s2["proof_frame"].endswith("F4.png") and s2["break_frame"].endswith("F4.png"), s2
     best, _, questions = check_takes.pick_best([take], STEPS)
     assert [b["step"] for b in best] == [1], best
     assert any("step 2: the checks disagreed" in q for q in questions), questions
+    assert any("muse-spark-1.1 forward: fail" in q for q in questions), questions
 
 
 def test_broken_reply_is_unsure():
     good = reply(["F3"], ["F4"], "F5")
     bad = reply(["F9"], ["F4"], "F5")  # F9 was never sent
-    take, _, run_dir = run_check([good, bad])
-    assert [s["verdict"] for s in take["steps"]] == ["unsure"] * 3, take["steps"]
+    # One broken vote: the two good ones still agree, so steps pass and fail as they say.
+    take, _, run_dir = run_check([good, bad, good])
+    assert [s["verdict"] for s in take["steps"]] == ["pass", "pass", "fail"], take["steps"]
     assert any(p.endswith("-vote2-raw.txt") for p in os.listdir(run_dir))
+    assert take["steps"][0]["votes"][1]["verdict"] == "invalid"
+    # Two broken votes: one good vote alone decides nothing.
+    take, _, run_dir = run_check([good, bad, bad])
+    assert [s["verdict"] for s in take["steps"]] == ["unsure"] * 3, take["steps"]
+    assert any(p.endswith("-vote3-raw.txt") for p in os.listdir(run_dir))
     labels = ["F1", "F2", "F3", "F4", "F5"]
     assert "F9" in check_takes.check_reply(json.loads(bad), [1, 2, 3], labels)
     assert "in order" in check_takes.check_reply(json.loads(reply(["F3"])), [1, 2, 3], ["F3"])
@@ -221,7 +272,7 @@ if __name__ == "__main__":
     subprocess.run([sys.executable, os.path.join(HERE, "make_synthetic_take.py"), TAKE], check=True)
     check_takes.redact_image = fake_redact_image
     tests = [test_changes_and_waits, test_frame_times, test_decide, test_agreeing_votes,
-             test_votes_on_different_frames_pass, test_disagreeing_votes_are_unsure, test_broken_reply_is_unsure, test_best_across_takes,
+             test_votes_on_different_frames_pass, test_two_of_three_pass, test_disagreeing_votes_are_unsure, test_broken_reply_is_unsure, test_best_across_takes,
              test_real_redaction_hides_the_planted_secret]
     for test in tests:
         test()
