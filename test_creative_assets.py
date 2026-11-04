@@ -12,6 +12,8 @@ import tempfile
 import types
 from datetime import datetime
 
+os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py logs the fake calls here, not in the real workspace
+
 from PIL import Image
 
 import make_assets

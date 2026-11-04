@@ -13,6 +13,7 @@ from PIL import Image
 
 from env import load_env_file
 from redact import redact_text
+from usage import log_call
 
 # Writes the voice-over for a script from `cut_video.py --plan`: one line per segment, sized to fill it.
 # Sent to Meta: the prompt, the storyline's hook and steps and the checked end states (all through redact_text),
@@ -89,7 +90,8 @@ def describe(seg, words):
     return "- " + " · ".join(parts)
 
 
-def call_spark(client, content, ids, name):
+def call_spark(client, content, ids, name, target=None):
+    # target goes in workspace/usage.jsonl: the script the lines are for.
     response = client.responses.create(
         model=MODEL,
         input=[{"type": "message", "role": "user", "content": content}],
@@ -98,6 +100,9 @@ def call_spark(client, content, ids, name):
     )
     usage = response.usage
     print(f"Tokens ({name}): input={usage.input_tokens} output={usage.output_tokens}")
+    log_call(MODEL, "narration write" if name == "narration_script" else "narration rewrite", target,
+             (usage.input_tokens * PRICE_IN + usage.output_tokens * PRICE_OUT) / 1e6,
+             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
     try:
         lines = json.loads(response.output_text)["lines"]
     except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -175,7 +180,7 @@ def main():
     client = OpenAI(base_url=BASE_URL, api_key=api_key, max_retries=0, timeout=600)
     ids = [s["id"] for s in segments]
     print(f"Writing {len(ids)} lines with {MODEL} ({sum(1 for s in segments if s.get('frame'))} frames sent)...")
-    lines, usage = call_spark(client, content, ids, "narration_script")
+    lines, usage = call_spark(client, content, ids, "narration_script", os.path.basename(args.script))
     usages = [usage]
 
     def misfits():
@@ -190,7 +195,8 @@ def main():
         wanted = "\n".join(f"- {i}: needs {words[i][0]}-{words[i][1]} words, has {len(lines[i].split())}: {lines[i]}"
                            for i in fix)
         text = rewrite_prompt.replace("{{SCRIPT}}", current).replace("{{FIX}}", wanted)
-        fixed, usage = call_spark(client, [{"type": "input_text", "text": text}], fix, "narration_rewrite")
+        fixed, usage = call_spark(client, [{"type": "input_text", "text": text}], fix, "narration_rewrite",
+                                  os.path.basename(args.script))
         usages.append(usage)
         lines.update(fixed)
 

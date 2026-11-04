@@ -12,6 +12,8 @@ import sys
 import tempfile
 import types
 
+os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py logs the fake calls here, not in the real workspace
+
 SECRET = "sk-test-PLANTED-0000-abcdefgh"  # long enough for redact.py's sk- pattern (20+ chars after "sk-")
 EMAIL = "alice@example.com"
 

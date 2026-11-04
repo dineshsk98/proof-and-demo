@@ -464,7 +464,7 @@ function startUpdate() {
 
 // ---------- Start-up ----------
 
-const PAGES = ["storyline", "readiness", "takes", "script", "cut"];
+const PAGES = ["storyline", "readiness", "takes", "script", "cut", "models"];
 
 function showPage() {
   const page = PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "storyline";
@@ -502,11 +502,13 @@ async function loadData() {
   latestCheck = await getJson("/api/check");
   latestCut = await getJson("/api/cut");
   await loadScripts(false);
+  await loadUsage(); // after the scripts, so it can show the one open on the Script page
   renderStoryline();
   renderReadiness();
   renderTakes();
   renderScript();
   renderCut();
+  renderModels();
 }
 
 draftButton.addEventListener("click", () => postJob("draft", "/api/draft"));

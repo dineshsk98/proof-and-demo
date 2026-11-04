@@ -12,6 +12,8 @@ from openai import OpenAI
 
 from env import load_env_file
 from redact import redact_text
+from script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
+from usage import log_call
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
@@ -119,8 +121,9 @@ def heartbeat(stop, started):
         print(f"  still waiting: {time.monotonic() - started:.0f} s", flush=True)
 
 
-def call_spark(client, prompt, name, schema):
+def call_spark(client, prompt, name, schema, job=None, target=None):
     # One Spark call with a strict JSON schema; prints a heartbeat while waiting, then token usage.
+    # job and target go in workspace/usage.jsonl: what the call did (default: name) and which file it was for.
     print(f"Waiting for Muse Spark ({name}), usually {USUAL_WAIT.get(name, 'a few min')}...", flush=True)
     started = time.monotonic()
     stop = threading.Event()
@@ -141,6 +144,8 @@ def call_spark(client, prompt, name, schema):
     usage = response.usage
     print(f"Tokens ({name}): input={usage.input_tokens} output={usage.output_tokens} total={usage.total_tokens}"
           f" in {elapsed:.0f} s", flush=True)
+    log_call(MODEL, job or name, target, (usage.input_tokens * PRICE_IN + usage.output_tokens * PRICE_OUT) / 1e6,
+             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
     if response.status != "completed":
         print(f"Response status: {response.status} (the reply may be cut off)", flush=True)
     return response
@@ -392,7 +397,7 @@ def claim_check(client, facts_text, facts_label, data, base):
     claim_prompt = read_text(CLAIM_CHECK_PATH)
     claim_prompt = claim_prompt.replace("{{IDEA}}", facts_text)
     claim_prompt = claim_prompt.replace("{{STORYLINE}}", json.dumps(data, indent=2, ensure_ascii=False))
-    response = call_spark(client, claim_prompt, "claims", CLAIMS_SCHEMA)
+    response = call_spark(client, claim_prompt, "claims", CLAIMS_SCHEMA, "claim check", os.path.basename(base) + ".json")
     reply = response.output_text
     try:
         claims = json.loads(reply)["claims"]
@@ -444,7 +449,8 @@ def draft(args, client):
     else:
         expected_names = chosen
 
-    response = call_spark(client, prompt, "storylines", build_schema(expected_names))
+    response = call_spark(client, prompt, "storylines", build_schema(expected_names), "storyline draft",
+                          os.path.basename(args.idea))
 
     os.makedirs(args.out_dir, exist_ok=True)
     base = new_base(args.out_dir, "hybrid" if args.combine else "storylines")
@@ -503,7 +509,8 @@ def revise(args, client):
     prompt = prompt.replace("{{EXAMPLE_MIN_WORDS}}", str(int(30 * MIN_WORDS_PER_SECOND)))
     prompt = prompt.replace("{{EXAMPLE_MAX_WORDS}}", str(int(30 * WORDS_PER_SECOND)))
 
-    response = call_spark(client, prompt, "storylines", build_schema(expected_names))
+    response = call_spark(client, prompt, "storylines", build_schema(expected_names), "storyline revise",
+                          f"{os.path.basename(args.revise)} variant {args.variant}")
 
     os.makedirs(args.out_dir, exist_ok=True)
     base = new_base(args.out_dir, "revised")

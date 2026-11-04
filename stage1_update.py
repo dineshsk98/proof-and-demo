@@ -16,6 +16,9 @@ except ModuleNotFoundError as e:
         raise  # redact.py exists but something it imports is missing
     sys.exit("redaction module missing: merge local-redaction first")
 
+from script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
+from usage import log_call
+
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
 MAX_OUTPUT_TOKENS = 32000  # one checklist is a few thousand tokens, plus reasoning
@@ -240,6 +243,9 @@ def main():
 
     usage = response.usage
     print(f"Tokens: input={usage.input_tokens} output={usage.output_tokens} total={usage.total_tokens}")
+    log_call(MODEL, "readiness checklist", f"{os.path.basename(args.storyline)} variant {args.variant}",
+             (usage.input_tokens * PRICE_IN + usage.output_tokens * PRICE_OUT) / 1e6,
+             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
     if response.status != "completed":
         print(f"Response status: {response.status} (the reply may be cut off)")
 

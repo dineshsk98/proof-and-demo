@@ -7,6 +7,7 @@ from datetime import datetime
 import requests
 
 from env import load_env_file
+from usage import log_call
 
 # One instrumental music bed (about 3 minutes) for the final cut, from ElevenLabs Eleven Music.
 # Only the style prompt below goes to ElevenLabs: no project text, no screenshots.
@@ -83,6 +84,8 @@ def main():
         print(f"{model} rejected the request (422): {response.text[:300]}")
     if response.status_code != 200:
         sys.exit(f"ElevenLabs returned {response.status_code}: {response.text[:500]}")
+    # Logged too, but ElevenLabs is not Meta: its line says provider "elevenlabs" and meta false.
+    log_call(model, "music bed", None, cost, provider="elevenlabs", audio_ms=args.seconds * 1000)
     path = os.path.join(args.out_dir, f"{stamp}.mp3")
     with open(path, "wb") as f:
         f.write(response.content)

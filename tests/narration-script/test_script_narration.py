@@ -8,6 +8,8 @@ import sys
 import tempfile
 import types
 
+os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py logs the fake calls here, not in the real workspace
+
 REPO_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path.insert(0, REPO_DIR)
 import script_narration  # noqa: E402

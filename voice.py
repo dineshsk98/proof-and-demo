@@ -11,6 +11,7 @@ from datetime import datetime
 import requests
 
 from env import load_env_file
+from usage import log_call
 
 MODEL = "muse-voice-transcribe-1.0"
 URL = "https://api.meta.ai/v1/asr/transcribe"
@@ -103,6 +104,9 @@ def main():
         convert_to_wav(args.audio, wav_path)
         check_wav(wav_path)
         data = transcribe(wav_path, api_key)
+    duration_ms = data.get("audioDurationMs")
+    log_call(MODEL, "voice note", os.path.basename(args.audio), estimate_cost(duration_ms) if duration_ms is not None else None,
+             audio_ms=duration_ms)
 
     text = data.get("transcript", "").strip()
     if not text:

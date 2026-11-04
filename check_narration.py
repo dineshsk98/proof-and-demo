@@ -9,6 +9,7 @@ import tempfile
 from datetime import datetime
 
 from env import load_env_file
+from usage import log_call
 from voice import MODEL, check_wav, convert_to_wav, estimate_cost, transcribe
 
 # Voice Transcribe listens to each narration clip (the ElevenLabs voice is not a Meta service) and the
@@ -120,6 +121,8 @@ def main():
         segment["credits"] = credits
         total_ms += duration_ms
         total_cost += estimate_cost(duration_ms)
+        log_call(MODEL, "narration check", f"{os.path.basename(args.script)} {segment['id']}", estimate_cost(duration_ms),
+                 audio_ms=duration_ms)
         asr = segment["asr"]
         print(f"{segment['id']} (step {segment['step']}): match {asr['match']:.2f}, flagged: {asr['flagged'] or 'none'}")
 
