@@ -119,7 +119,8 @@ def votes_for(parts, check):
                 continue
             for step in take.get("steps", []):
                 if step.get("number") == part.get("step"):
-                    votes += [dict(vote, model=vote.get("model") or check.get("model")) for vote in step.get("votes") or []]
+                    votes += [dict(vote, model=vote.get("model") or check.get("model"))
+                              for vote in step.get("votes") or [] if isinstance(vote, dict)]  # very old checks: bare strings
     return votes
 
 

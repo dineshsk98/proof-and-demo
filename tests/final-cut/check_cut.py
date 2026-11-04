@@ -257,7 +257,10 @@ def main():
             if step["narration"] is None:
                 continue
             tone = levels[NARRATION_HZ[step["number"]]]
-            start = min(rising_edges(tone, 0.03, times), key=lambda t: abs(t - step["out_start_s"]), default=None)
+            rises = rising_edges(tone, 0.03, times)
+            if tone[0] > 0.03:
+                rises.insert(0, 0.0)  # a clip that starts with the video has no edge to find
+            start = min(rises, key=lambda t: abs(t - step["out_start_s"]), default=None)
             end = min(falling_edges(tone, 0.03, times),
                       key=lambda t: abs(t - step["out_start_s"] - step["narration_s"]), default=None)
             print(f"  Step {step['number']} narration: starts {start} (step starts {step['out_start_s']}), "

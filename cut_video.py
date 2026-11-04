@@ -79,7 +79,14 @@ CAPTION_CHARS_PER_SECOND = 15  # reading time when there is no narration audio y
 CAPTION_MIN_SECONDS = 2
 
 # Music bed: low throughout, ducked deeper than the take audio under narration, faded in and out.
-MUSIC_LUFS = -30  # the bed is brought to this loudness (narration is around -16 to -20)
+MUSIC_LUFS = -30  # the bed is brought to this loudness (narration is brought to NARRATION_LUFS)
+# Every narration clip is brought to the same loudness before it is mixed in. ElevenLabs lines can drift quieter
+# over a long read (one script's clips went from -27 to -41 dB), so without this the voice fades through the video.
+# Clips are raised by gain, and a limiter holds their peaks under NARRATION_PEAK_DB so nothing clips. -18, not -16:
+# these clips' peaks sit 20-25 dB above their loudness, so a higher target would mean heavy limiting.
+NARRATION_LUFS = -18
+NARRATION_PEAK_DB = -1.5
+NARRATION_MAX_GAIN_DB = 24  # a clip is never raised more than this (a near-silent clip would be mostly noise)
 MUSIC_DUCK_LEVEL = 0.12  # about -18 dB under narration, with the same fast-down, slow-up curve
 MUSIC_FADE_IN_S = 1.5
 MUSIC_FADE_OUT_S = 3.0
@@ -806,14 +813,41 @@ def duck_volume(narration, level):
     return expr
 
 
-def loudness(path):
-    # Integrated loudness (LUFS) from ffmpeg's EBU R128 meter, so any music file sits at the same level.
-    result = subprocess.run(["ffmpeg", "-nostats", "-i", path, "-af", "ebur128=framelog=quiet", "-f", "null", "-"],
+def loudness_and_peak(path, chain=""):
+    # Integrated loudness (LUFS) and true peak (dBTP) from ffmpeg's EBU R128 meter, after the filters in chain.
+    filters = (chain + "," if chain else "") + "ebur128=framelog=quiet:peak=true"
+    result = subprocess.run(["ffmpeg", "-nostats", "-i", path, "-af", filters, "-f", "null", "-"],
                             capture_output=True, text=True)
-    lines = [line for line in result.stderr.splitlines() if line.strip().startswith("I:")]
-    if not lines:
+    lines = [line.split() for line in result.stderr.splitlines()]
+    lufs = [l[1] for l in lines if l and l[0] == "I:"]
+    peak = [l[1] for l in lines if l and l[0] == "Peak:"]
+    if not lufs or not peak:
         sys.exit(f"Couldn't measure the loudness of {path}")
-    return float(lines[-1].split()[1])
+    return float(lufs[-1]), float(peak[-1])
+
+
+def loudness(path):
+    # Integrated loudness (LUFS), so any music file sits at the same level.
+    return loudness_and_peak(path)[0]
+
+
+def level_filter(gain_db):
+    # The gain, then a limiter that keeps peaks under NARRATION_PEAK_DB. latency=1: the limiter's 5 ms look-ahead
+    # doesn't delay the clip. level=0: the limiter doesn't change the level itself.
+    return f"volume={gain_db:.2f}dB,alimiter=limit={10 ** (NARRATION_PEAK_DB / 20):.4f}:level=0:latency=1"
+
+
+def narration_gain(path):
+    # The gain (dB) that brings one narration clip to NARRATION_LUFS. Returns (loudness, true peak, gain).
+    # The limiter takes a little loudness off a peaky clip, so the clip is measured once more with the gain and
+    # limiter on, and the difference is added. A clip too quiet or short to measure (-70 LUFS) is left as it is.
+    lufs, peak = loudness_and_peak(path)
+    if lufs <= -70:
+        return lufs, peak, 0.0
+    gain = min(NARRATION_LUFS - lufs, NARRATION_MAX_GAIN_DB)
+    after, _ = loudness_and_peak(path, level_filter(gain))
+    gain = min(gain + NARRATION_LUFS - after, NARRATION_MAX_GAIN_DB)
+    return lufs, peak, round(gain, 2)
 
 
 def join_parts(parts, narration, music, total, work_dir, out_path):
@@ -828,10 +862,11 @@ def join_parts(parts, narration, music, total, work_dir, out_path):
     graph = [f"[0:a]{duck.format(duck_volume(narration, DUCK_LEVEL))}[take]" if narration else "[0:a]anull[take]"]
     mix = ["[take]"]
     for k, clip in enumerate(narration, 1):
-        # Each step's clip starts where its step starts.
+        # Each step's clip starts where its step starts, at the gain that brings it to NARRATION_LUFS.
         cmd += ["-i", clip["file"]]
         delay = round(clip["out_start_s"] * SAMPLE_RATE)
-        graph.append(f"[{k}:a]aresample={SAMPLE_RATE},aformat=channel_layouts=stereo,adelay=delays={delay}S:all=1[n{k}]")
+        graph.append(f"[{k}:a]aresample={SAMPLE_RATE},aformat=channel_layouts=stereo,{level_filter(clip.get('gain_db', 0))},"
+                     f"adelay=delays={delay}S:all=1[n{k}]")
         mix.append(f"[n{k}]")
     if music:
         # Looped if it is shorter than the video, brought to MUSIC_LUFS, ducked under narration, faded in and out.
@@ -1468,6 +1503,10 @@ def render_cut(cut, check, base_dir, args, started):
         # Which model did what in this render: the script's segment credits (none when cut straight from a check),
         # and every take-check vote on the steps it shows.
         meta_credits = credit_summary(cut.get("script_segments", []), votes_for(stretches, check))
+        if narration:
+            print(f"Measuring {len(narration)} narration clip(s), to bring each one to {NARRATION_LUFS} LUFS...")
+        for clip in narration:
+            clip["loudness_lufs"], clip["true_peak_db"], clip["gain_db"] = narration_gain(clip["file"])
         chapters = cut.get("chapters", [])
         for i, ch in enumerate(chapters):
             # Chapter cards come from another tool, and they are in the video, so they are read for secrets too.
@@ -1522,7 +1561,10 @@ def render_cut(cut, check, base_dir, args, started):
             "muted_out_s": [[p["out_start_s"], p["out_end_s"]] for p in shown if p["preview"] or p["speed"] > 1],
             "labels": labels,
             "narration_clips": [{"segment": c.get("segment"), "step": c.get("step", c.get("number")), "file": c["file"],
-                                 "out_start_s": c["out_start_s"], "duration_s": round(c["duration_s"], 3)} for c in narration],
+                                 "out_start_s": c["out_start_s"], "duration_s": round(c["duration_s"], 3),
+                                 "loudness_lufs": c["loudness_lufs"], "true_peak_db": c["true_peak_db"],
+                                 "gain_db": c["gain_db"]} for c in narration],
+            "narration_level": {"target_lufs": NARRATION_LUFS, "peak_ceiling_db": NARRATION_PEAK_DB} if narration else None,
             "line_gap_s": LINE_GAP_S,
             "chapters": [{"segment": ch["segment"], "image": ch["image"], "out_start_s": ch["out_start_s"],
                           "out_end_s": ch["out_end_s"], "secrets_boxed": len(ch["findings"])} for ch in chapters],
