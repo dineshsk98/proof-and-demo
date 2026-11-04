@@ -267,14 +267,17 @@ def check_storyline(data, structure_names, rules_text, min_words_per_second=0):
     return None
 
 
-def render_markdown(data, made_line, checklist, title="Demo storylines"):
+def render_markdown(data, made_line, checklist, title="Demo storylines", marks=None):
     # made_line says when, by which model and from which files the storyline was made.
+    # marks: optional {variant number: note}, shown after that variant's heading.
+    marks = marks or {}
     lines = [f"# {title}", "", made_line]
     for n, variant in enumerate(data["variants"], start=1):
         total = sum(step["target_seconds"] for step in variant["steps"])
+        mark = f" {marks[n]}" if n in marks else ""
         lines += [
             "",
-            f"## Variant {n}: {variant['structure']} ({total} s)",
+            f"## Variant {n}: {variant['structure']} ({total} s){mark}",
             "",
             f"**Hook:** {variant['hook']}",
             "",
@@ -361,11 +364,11 @@ def format_checklist(checklist):
     return json.dumps(steps, indent=2, ensure_ascii=False)
 
 
-def save_storyline(data, base, made_line, title):
+def save_storyline(data, base, made_line, title, marks=None):
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     with open(base + ".md", "w", encoding="utf-8") as f:
-        f.write(render_markdown(data, made_line, read_text(CHECKLIST_PATH), title))
+        f.write(render_markdown(data, made_line, read_text(CHECKLIST_PATH), title, marks))
     print(f"Wrote {base}.json")
     print(f"Wrote {base}.md")
 
@@ -458,7 +461,8 @@ def revise(args, client):
         sys.exit("--revise takes no idea or rules file; use --rules to pick the rules file.")
     if not args.brief:
         sys.exit("--revise needs --brief <md> with the builder's notes on what to change.")
-    variants = json.loads(read_text(args.revise)).get("variants") or []
+    source_file = json.loads(read_text(args.revise))
+    variants = source_file.get("variants") or []
     if not 1 <= args.variant <= len(variants):
         sys.exit(f"--variant must be from 1 to {len(variants)} for {args.revise}")
     variant = variants[args.variant - 1]
@@ -503,10 +507,22 @@ def revise(args, client):
 
     os.makedirs(args.out_dir, exist_ok=True)
     base = new_base(args.out_dir, "revised")
+    # The checks run on the reply, which holds only the revised variant. The other variants
+    # are copied unchanged from the source file, so they aren't checked again (they may have
+    # been drafted under older limits).
     data = check_reply(response.output_text, base, expected_names, rules_text, MIN_WORDS_PER_SECOND)
-    made_line = (f"Revised {datetime.now():%Y-%m-%d %H:%M} by {MODEL} from variant {args.variant} of `{args.revise}`, "
-                 f"with checklist `{checklist_path}`, brief `{args.brief}`, idea `{idea_path}` and `{args.revise_rules}`.")
-    save_storyline(data, base, made_line, "Revised demo storyline")
+
+    # The output is the whole source file: every top-level field and every variant in the
+    # same order, with only the chosen variant replaced by the revised one.
+    revised = data["variants"][0]
+    full = dict(source_file)
+    full["variants"] = variants[:args.variant - 1] + [revised] + variants[args.variant:]
+    print(f"Replaced variant {args.variant} ({revised['structure']}); kept the other {len(variants) - 1} unchanged.")
+    made_line = (f"Revised {datetime.now():%Y-%m-%d %H:%M} by {MODEL}: variant {args.variant} of `{args.revise}`, "
+                 f"with checklist `{checklist_path}`, brief `{args.brief}`, idea `{idea_path}` and `{args.revise_rules}`. "
+                 "The other variants are unchanged.")
+    marks = {args.variant: f"(revised {datetime.now():%Y-%m-%d} from the brief)"}
+    save_storyline(full, base, made_line, "Demo storylines", marks)
 
     if args.claim_check:
         # In revise mode the facts are the revise inputs themselves. The old variant isn't
