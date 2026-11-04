@@ -288,9 +288,83 @@ def test_proof_card_draws_the_panel():
     print("ok  proof card: drawn at 1920x1080 with the \"What each Meta model did\" panel")
 
 
+def dense_log(steps=5, stitches=4, holds=3, speed_ups=12):
+    # A busy cut: long step texts, a preview, many sped-up waits, trims, stitches and holds, and every kind of credit.
+    take = "D:/takes/kelir-take-4.mp4"
+    return {
+        "mode": "stitched", "trims": [{"start_s": 1, "end_s": 3}] * 6, "one_take_pass": None,
+        "takes_used": [take, "D:/takes/kelir-take-3.mp4"],
+        "preview": {"take": take, "src_start_s": 60, "src_end_s": 64},
+        "speed_ups": [{"take": take, "speed": 4, "src_start_s": 10 * i, "src_end_s": 10 * i + 5.5,
+                       "out_start_s": 3 * i, "out_end_s": 3 * i + 1.375} for i in range(speed_ups)],
+        "stitches": [{"label": f"STITCH: kelir-take-4 1:4{i}.8 → kelir-take-3 3:0{i}.8", "out_s": 20.0 * i + 5}
+                     for i in range(stitches)],
+        "holds": [{"step": i + 1, "seconds": 1.0, "out_start_s": 30.0 * i + 12} for i in range(holds)],
+        "steps": [{"number": n + 1, "verdict": "pass", "take": take, "start_s": 0, "end_s": 70,
+                   "expected_end_state": "Open the New capsule form → the written message, attached photos and voice "
+                                         "note ready to send appear, with the gift letter and its photo behind it."}
+                  for n in range(steps)],
+        "redaction": {"counts": {"email": 1, "api_key": 2}, "secrets_found": 3, "frames_read": 56, "stable_stretches": 55},
+        "meta_credits": usage.credit_summary(SEGMENTS, usage.votes_for(SEGMENTS, CHECK)),
+    }
+
+
+def draw_and_record(log, path):
+    # Draws the card and returns every text drawn on it as (x, y, text, font size).
+    drawn = []
+    real_text = cut_video.ImageDraw.ImageDraw.text
+
+    def spy(self, xy, text, *args, **kwargs):
+        drawn.append((xy[0], xy[1], text, kwargs["font"].size))
+        return real_text(self, xy, text, *args, **kwargs)
+
+    cut_video.ImageDraw.ImageDraw.text = spy
+    try:
+        cut_video.make_proof_card(log, {}, path)
+    finally:
+        cut_video.ImageDraw.ImageDraw.text = real_text
+    return drawn
+
+
+def test_all_sections_fit():
+    # Busy cuts: 5 steps (the credits fit under them), 6 steps (no room there, so the credits go right), and a
+    # cut with 25 stitches (the Edits list gets "+ N more"). Every heading is drawn, nothing reaches the footer
+    # line, and no wrapped line ends on a lone word.
+    footer = "Cut by the tool from the takes listed on this card"
+    for name, log in [("5 steps", dense_log()), ("6 steps", dense_log(steps=6)),
+                      ("25 stitches", dense_log(steps=6, stitches=25, holds=6, speed_ups=20))]:
+        drawn = draw_and_record(log, os.path.join(TMP, "dense.png"))
+        texts = [t for _, _, t, _ in drawn]
+        for heading in ("Edits (all labelled in the video)", "Redaction (local, solid boxes)", "What each Meta model did"):
+            assert heading in texts, (name, heading)
+        assert footer in texts and "during the event" not in " ".join(texts), name
+        for x, y, text, size in drawn:
+            if text != footer:
+                assert y + size * 1.3 <= cut_video.CARD_BOTTOM, (name, y, text)  # above the footer at 1010
+        meta_rows = [t for t in texts if t.startswith(("Muse ", "Voice Transcribe", "Not Meta"))]
+        assert len(meta_rows) >= 5, (name, meta_rows)  # every credit line is on the card
+        assert not any(" " not in t and len(t) <= 3 for t in texts), (name, [t for t in texts if len(t) <= 3])
+        more = [t for t in texts if t.startswith("+ ") and t.endswith("more, all listed in the cut log")]
+        if name == "25 stitches":
+            assert more, texts  # far too many to list: the list ends with "+ N more"
+        else:
+            # 4 stitches, 3 holds and 12 sped-up waits: every stitch and hold listed, the waits summed up, nothing left out
+            assert not more, (name, texts)
+            assert sum(t.startswith(("STITCH", "HELD FRAME")) for t in texts) == 7, (name, texts)
+            assert "SPED UP 4x: 12 waits, 66.0 s → 16.5 s" in " ".join(texts), (name, texts)
+    # Three speed-ups or fewer stay listed, each on one short line.
+    lines = cut_video.edit_lines(dense_log(speed_ups=3))
+    assert lines[-1] == "PREVIEW of kelir-take-4 1:00.0–1:04.0; TRIMMED 6 still screen(s), 12.0 s", lines
+    assert [l for l in lines if l.startswith("SPED UP")] == [
+        "SPED UP 4x: kelir-take-4 0:00.0–0:05.5 → 1.4 s", "SPED UP 4x: kelir-take-4 0:10.0–0:15.5 → 1.4 s",
+        "SPED UP 4x: kelir-take-4 0:20.0–0:25.5 → 1.4 s"], lines
+    print("ok  all sections fit: 5 and 6 busy steps and 25 stitches, every heading above the footer, no lone words")
+
+
 TESTS = [test_log_line_shape, test_cost_is_null_without_a_price, test_a_failed_write_does_not_stop_the_caller,
          test_call_sites_log_their_calls, test_stand_in_narration_logs_nothing, test_panel_aggregation,
-         test_script_credits_endpoint, test_proof_card_lines_from_credits, test_proof_card_draws_the_panel]
+         test_script_credits_endpoint, test_proof_card_lines_from_credits, test_proof_card_draws_the_panel,
+         test_all_sections_fit]
 
 if __name__ == "__main__":
     for test in TESTS:
