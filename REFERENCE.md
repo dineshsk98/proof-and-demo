@@ -1,6 +1,6 @@
-# DINESH TO FILL: reference
+# Proof & Demo: reference
 
-Per-script detail for DINESH TO FILL. The [README](README.md) covers what it is, how to install it and the end-to-end flow.
+Per-script detail for Proof & Demo. The [README](README.md) covers what it is, how to install it and the end-to-end flow.
 
 Every script that calls Meta reads `MODEL_API_KEY` from `.env` (through `env.py`, which reads `.env` from the current folder, so run the scripts from the repo folder). They use `muse-spark-1.3`, `muse-spark-1.1`, `muse-image-1.0` or `muse-voice-transcribe-1.0` on the standard tier, never a `-contributor` model. Text and images are redacted locally first; audio is sent as it is.
 

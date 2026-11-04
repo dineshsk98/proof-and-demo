@@ -1,4 +1,4 @@
-# DINESH TO FILL
+# Proof & Demo
 
 **A demo-video companion for solo hackathon builders: it plans the demo from day one, checks your takes, boxes out secrets locally, and cuts an honestly labelled video.**
 
@@ -8,7 +8,7 @@ Built for the Meta Global AI Developer Hackathon (Indie track).
 
 A solo builder usually leaves the demo video to the last night. Features that worked in trials break while recording. Most takes have one good stretch. Server and agent waits eat the runtime. Personal details get blurred by hand.
 
-DINESH TO FILL works on the video alongside the build:
+Proof & Demo works on the video alongside the build:
 - It drafts the demo storyline on day one.
 - It keeps the plan in step with what really works.
 - It checks each recorded take against what its step should show.
