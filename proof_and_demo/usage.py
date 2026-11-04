@@ -8,7 +8,7 @@ from datetime import datetime
 # The app's Meta models page reads the file back (usage_by_model), and the Meta models page and the proof card
 # say which model did what in one script from the segments' credits (credit_summary).
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, above this package
 
 # Shown names. A model not listed here shows by its id.
 MODEL_NAMES = {

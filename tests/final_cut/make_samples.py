@@ -7,11 +7,12 @@ import sys
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Builds synthetic inputs for cut_video.py, matching the sample check JSONs in this folder:
+# Builds synthetic inputs for cut_video:
 # - takes: fake app screens drawn with Pillow, joined by ffmpeg into variable-frame-rate MP4s
 #   (a new frame only when the screen changes, the way Windows Game Bar records)
 # - proof frames, narration MP3s with their JSON, and a title card
-# Every secret here is FAKE. Everything is written to out/ (not committed).
+# - sample-check.json: the take check for take1 and take2, as check_takes would write it
+# Every secret here is FAKE. Everything is written to out/ and sample-check.json (neither is committed).
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
@@ -29,7 +30,7 @@ GREEN, RED, WHITE, GREY = (60, 200, 110), (230, 70, 70), (235, 235, 235), (150, 
 BOOT_LOG = ["$ python app.py", "Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)"]
 
 # Each take is a list of (time, changes). The screen state at time t is every change up to t.
-# The times here are the "changes" and "waits" written in sample-check*.json.
+# The times here are the "changes" and "waits" written in SAMPLE_CHECK below.
 STEPS_1_2 = [
     (0.0, {"step": "Step 1: Open the app", "status": ("Loading...", GREY), "log": BOOT_LOG}),
     (2.0, {"status": ("Ready", GREEN)}),
@@ -62,6 +63,38 @@ PROOF_FRAMES = {  # file name -> (take, time)
     "take3-step1.png": ("take3", 8.0), "take3-step2.png": ("take3", 32.0), "take3-step3.png": ("take3", 40.0),
 }
 NARRATION = [(1, 440, 6.0), (2, 550, 13.0), (3, 660, 17.0)]  # (step, tone Hz, seconds): steps 2 and 3 run long on purpose
+
+STEP_1 = "The dashboard shows a green 'Ready' message"
+STEP_2 = "After Draft storyline, 'Storyline ready: 3 steps' appears in green"
+STEP_3 = "After Record, a green 'Saved' message appears and the take is listed"
+PASS, FAIL = ["pass", "pass", "pass"], ["fail", "fail", "fail"]
+# The take check cut_video reads. Paths are relative to this folder. take1 fails step 3; take2 passes it.
+SAMPLE_CHECK = {
+    "checklist": "tests/sample_workspace/checklists/2026-11-01-sample.json",
+    "takes": [
+        {"file": "out/take1.mp4", "duration_s": 40.0, "fps": 6.48,
+         "changes": [2.0, 5.0, 11.0, 12.0, 24.0, 30.0, 34.0, 36.0], "waits": [{"start_s": 12.0, "end_s": 30.0}],
+         "steps": [
+             {"number": 1, "expected_end_state": STEP_1, "verdict": "pass", "start_s": 0.5, "end_s": 10.0,
+              "proof_frame": "out/frames/take1-step1.png", "break_frame": None, "votes": PASS},
+             {"number": 2, "expected_end_state": STEP_2, "verdict": "pass", "start_s": 10.0, "end_s": 34.0,
+              "proof_frame": "out/frames/take1-step2.png", "break_frame": None, "votes": PASS},
+             {"number": 3, "expected_end_state": STEP_3, "verdict": "fail", "start_s": 34.0, "end_s": 40.0,
+              "proof_frame": None, "break_frame": "out/frames/take1-step3-break.png", "votes": FAIL},
+         ]},
+        {"file": "out/take2.mp4", "duration_s": 25.0, "fps": 10.0, "changes": [6.0, 9.0, 15.0], "waits": [],
+         "steps": [
+             {"number": 3, "expected_end_state": STEP_3, "verdict": "pass", "start_s": 5.0, "end_s": 20.0,
+              "proof_frame": "out/frames/take2-step3.png", "break_frame": None, "votes": PASS},
+         ]},
+    ],
+    "best": [
+        {"step": 1, "take": "out/take1.mp4", "start_s": 0.5, "end_s": 10.0},
+        {"step": 2, "take": "out/take1.mp4", "start_s": 10.0, "end_s": 34.0},
+        {"step": 3, "take": "out/take2.mp4", "start_s": 5.0, "end_s": 20.0},
+    ],
+    "one_take_pass": None,
+}
 
 FONTS = {
     "counter": ImageFont.truetype(MONO_FONT, 44),
@@ -174,7 +207,9 @@ def main():
              "-frames:v", "1", os.path.join(OUT, "frames", file)])
     make_narration()
     make_title_card()
-    print("Done:", OUT)
+    with open(os.path.join(HERE, "sample-check.json"), "w", encoding="utf-8") as f:
+        json.dump(SAMPLE_CHECK, f, indent=2)
+    print("Done:", OUT, "and", os.path.join(HERE, "sample-check.json"))
 
 
 if __name__ == "__main__":

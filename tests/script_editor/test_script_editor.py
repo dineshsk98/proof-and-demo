@@ -19,12 +19,12 @@ sys.path.insert(0, REPO)
 # app.py reads WORKSPACE_DIR when it is imported, so a copy of the sample workspace is set up first.
 TMP = tempfile.mkdtemp(prefix="script-editor-test-")
 WORKSPACE = os.path.join(TMP, "workspace")
-shutil.copytree(os.path.join(REPO, "tests", "sample-workspace"), WORKSPACE)
+shutil.copytree(os.path.join(REPO, "tests", "sample_workspace"), WORKSPACE)
 os.environ["WORKSPACE_DIR"] = WORKSPACE
 
-import app  # noqa: E402
-import improve_script  # noqa: E402
-import validate_script  # noqa: E402
+from proof_and_demo import app  # noqa: E402
+from proof_and_demo import improve_script  # noqa: E402
+from proof_and_demo import validate_script  # noqa: E402
 
 SCRIPT_NAME = "2026-11-03-120000.json"
 with open(os.path.join(WORKSPACE, "scripts", SCRIPT_NAME), encoding="utf-8") as f:
@@ -399,23 +399,23 @@ def test_pipeline_commands():
 
     app.start_plan("sample-check.json", "storyline-sample.json", 2)
     kind, command, _ = started.pop()
-    assert kind == "plan" and command[1:] == [app.CUT_PATH, check, "--plan", "--scripts-dir", app.SCRIPTS_DIR, "--storyline", os.path.join(WORKSPACE, "storylines", "storyline-sample.json"), "--variant", "2"]
+    assert kind == "plan" and command[1:] == [*app.CUT_TOOL, check, "--plan", "--scripts-dir", app.SCRIPTS_DIR, "--storyline", os.path.join(WORKSPACE, "storylines", "storyline-sample.json"), "--variant", "2"]
     assert app.start_plan("nope.json").status_code == 400 and not started
     # the title card goes into the plan when there is one; the preview is opt-in and never passed
     os.makedirs(app.ASSETS_DIR, exist_ok=True)
     open(os.path.join(app.ASSETS_DIR, "title-card.png"), "wb").write(b"x")
     app.start_plan("sample-check.json")
     command = started.pop()[1]
-    assert command[1:] == [app.CUT_PATH, check, "--plan", "--scripts-dir", app.SCRIPTS_DIR, "--title-card", os.path.join(app.ASSETS_DIR, "title-card.png")]
+    assert command[1:] == [*app.CUT_TOOL, check, "--plan", "--scripts-dir", app.SCRIPTS_DIR, "--title-card", os.path.join(app.ASSETS_DIR, "title-card.png")]
     assert "--preview" not in command
 
     app.start_write(SCRIPT_NAME)
     kind, command, _ = started.pop()
-    assert kind == "write" and command[1:] == [app.SCRIPT_NARRATION_PATH, saved]
+    assert kind == "write" and command[1:] == [*app.SCRIPT_NARRATION_TOOL, saved]
 
     app.start_speak(SCRIPT_NAME, stand_in=True)
     kind, command, details = started.pop()
-    assert kind == "speak" and command[1:] == [app.NARRATE_PATH, "--script", saved, "--stand-in"] and details["stand_in"] is True
+    assert kind == "speak" and command[1:] == [*app.NARRATE_TOOL, "--script", saved, "--stand-in"] and details["stand_in"] is True
 
     # The paid call needs the confirm flag.
     refused = app.start_speak(SCRIPT_NAME)
@@ -423,11 +423,11 @@ def test_pipeline_commands():
     app.start_speak(SCRIPT_NAME, confirm=True)
     if started:  # (only when the ElevenLabs keys are in .env: otherwise it is refused for the missing keys)
         kind, command, _ = started.pop()
-        assert command[1:] == [app.NARRATE_PATH, "--script", saved, "--yes"]  # narrate.py asks for --yes before it spends money
+        assert command[1:] == [*app.NARRATE_TOOL, "--script", saved, "--yes"]  # narrate.py asks for --yes before it spends money
 
     app.start_render(SCRIPT_NAME)
     kind, command, details = started.pop()
-    assert kind == "cut" and command[1:] == [app.CUT_PATH, "--script", saved, "--out-dir", app.FINAL_DIR]
+    assert kind == "cut" and command[1:] == [*app.CUT_TOOL, "--script", saved, "--out-dir", app.FINAL_DIR]
     assert app.start_render("nope.json").status_code == 400 and not started
     assert app.start_render(SCRIPT_NAME, music="../nope.mp3").status_code == 400 and not started
 
@@ -447,14 +447,14 @@ def test_pipeline_commands():
     assert app.get_files()["leak_report"] == "b.leak-report.json"
     app.start_render(SCRIPT_NAME, music="bed.mp3", reuse=True)
     command = started.pop()[1]
-    assert command[1:] == [app.CUT_PATH, "--script", saved, "--out-dir", app.FINAL_DIR, "--music", os.path.join(app.MUSIC_DIR, "bed.mp3"), "--reuse-redaction", newer]
+    assert command[1:] == [*app.CUT_TOOL, "--script", saved, "--out-dir", app.FINAL_DIR, "--music", os.path.join(app.MUSIC_DIR, "bed.mp3"), "--reuse-redaction", newer]
     app.start_render(SCRIPT_NAME, music="bed.mp3", reuse=False)
     assert "--reuse-redaction" not in started.pop()[1]
     os.remove(newer)
     os.remove(older)
     assert app.get_files()["leak_report"] is None
     app.start_render(SCRIPT_NAME, reuse=True)  # nothing to reuse: the flag is left out
-    assert started.pop()[1] == [sys.executable, app.CUT_PATH, "--script", saved, "--out-dir", app.FINAL_DIR]
+    assert started.pop()[1] == [sys.executable, *app.CUT_TOOL, "--script", saved, "--out-dir", app.FINAL_DIR]
 
     response = call(app.start_improve, {"file": SCRIPT_NAME, "ids": ["s01", "s03"], "note": "shorter"})
     kind, command, details = started.pop()
@@ -470,16 +470,16 @@ def test_narration_estimate():
     fake = os.path.join(TMP, "fake_narrate.py")
     open(fake, "w").write("import sys\nprint('Narrating 6 lines: 448 characters (about 448 ElevenLabs credits, about $0.07 at API prices)')\n"
                           "sys.exit('Nothing was sent. Add --yes to make the calls.')\n")
-    real = app.NARRATE_PATH
-    app.NARRATE_PATH = fake
+    real = app.NARRATE_TOOL
+    app.NARRATE_TOOL = [fake]
     try:
         assert app.estimate_narration(SCRIPT_NAME) == {"source": "narrate.py", "lines": 6, "characters": 448, "dollars": 0.07}
-        app.NARRATE_PATH = os.path.join(TMP, "missing.py")  # nothing readable: a rough rate over the saved lines, and it says so
+        app.NARRATE_TOOL = [os.path.join(TMP, "missing.py")]  # nothing readable: a rough rate over the saved lines, and it says so
         fallback = app.estimate_narration(SCRIPT_NAME)
         chars = sum(len(s["narration"]) for s in SCRIPT["segments"] if s["narration"].strip())
         assert fallback["source"] == "fallback" and fallback["characters"] == chars and fallback["dollars"] == round(chars / 1000 * 0.08, 2)
     finally:
-        app.NARRATE_PATH = real
+        app.NARRATE_TOOL = real
     assert app.estimate_narration("nope.json").status_code == 400
 
 
@@ -488,7 +488,7 @@ def test_revise_and_cut_commands():
     call(app.start_revise, {"file": "storyline-sample.json", "variant": 2, "brief": "Open on the failed take."})
     kind, command, details = started.pop()
     brief = command[command.index("--brief") + 1]
-    assert kind == "revise" and command[2] == "--revise" and command[command.index("--variant") + 1] == "2"
+    assert kind == "revise" and command[1:4] == [*app.DRAFTER_TOOL, "--revise"] and command[command.index("--variant") + 1] == "2"
     assert open(brief, encoding="utf-8").read() == "Open on the failed take.\n" and os.path.dirname(brief) == app.BRIEFS_DIR
     assert "--checklist" not in command
     call(app.start_revise, {"file": "storyline-sample.json", "variant": 1, "brief": "x", "checklist": "2026-11-01-sample.json"})
@@ -502,7 +502,7 @@ def test_revise_and_cut_commands():
     open(os.path.join(app.MUSIC_DIR, "bed.mp3"), "wb").write(b"x")
     app.start_cut("sample-check.json", storyline="storyline-sample.json", variant=2, music="bed.mp3")
     kind, command, _ = started.pop()
-    assert command[1:] == [app.CUT_PATH, check, "--out-dir", app.FINAL_DIR, "--storyline", os.path.join(WORKSPACE, "storylines", "storyline-sample.json"),
+    assert command[1:] == [*app.CUT_TOOL, check, "--out-dir", app.FINAL_DIR, "--storyline", os.path.join(WORKSPACE, "storylines", "storyline-sample.json"),
                            "--variant", "2", "--music", os.path.join(app.MUSIC_DIR, "bed.mp3")]
     assert app.start_cut("sample-check.json", music="../other.mp3").status_code == 400
     assert app.start_cut("sample-check.json", storyline="nope.json").status_code == 400

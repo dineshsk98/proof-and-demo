@@ -9,9 +9,9 @@ from datetime import datetime
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-from env import load_env_file
-from redact import redact_text
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.redact import redact_text
+from proof_and_demo.usage import log_call
 
 # Title card and thumbnail. Muse Image paints a text-free background (one call, $0.01);
 # Pillow then writes the title and subtitle on top. Image models misspell words and smear
@@ -32,10 +32,11 @@ ACCENT_COLOR = (45, 212, 191)  # teal, for the short bar and the subtitle
 # The first font that exists is used; Windows ships both of these.
 FONT_PATHS = [r"C:\Windows\Fonts\segoeuib.ttf", r"C:\Windows\Fonts\arialbd.ttf"]
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "title-card.md")
-CHAPTER_PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "chapter-card.md")  # one style prompt, so the cards look like a set
-SPLIT_PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "split-card.md")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(PACKAGE_DIR)
+PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "title-card.md")
+CHAPTER_PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "chapter-card.md")  # one style prompt, so the cards look like a set
+SPLIT_PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "split-card.md")
 CHAPTER_SECONDS = 2.0  # how long a chapter card shows in the cut
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "assets"))
 

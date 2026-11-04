@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "..")))
-import redact  # noqa: E402
+from proof_and_demo import redact  # noqa: E402
 
 # Measures how many planted FAKE secrets redact_image() hides on synthetic screenshots,
 # and how many boxes it draws on text that holds no secret (false positives).
@@ -36,7 +36,7 @@ FILLER = [
     "Server listening on http://127.0.0.1:8080 and 192.168.100.200",
     "commit 52972b3a8f0e1c2d3b4a5f6e7d8c9b0a1f2e3d4c Initial commit",
     "MODEL=muse-spark-1.3  DEBUG=true  MAX_SECONDS=180",
-    "Open D:/Dinesh/projects/meta-hackathon/demo-tool/README.md",
+    "Open C:/projects/my-app/demo-tool/README.md",
     "Total: 1,234,567 rows, 98.6% done, ETA 00:03:15",
     "draftStoryline() returned 6 variants for structure ProblemFirst",
     "See https://api.meta.ai/v1/responses for the response format",

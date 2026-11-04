@@ -14,25 +14,27 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from draft_storyline import STEP_FIELDS, VARIANT_FIELDS
-from env import load_env_file
-from usage import credit_summary, read_usage, usage_by_model, votes_for
-from validate_script import check_script, probe_seconds, probe_size
+from proof_and_demo.draft_storyline import STEP_FIELDS, VARIANT_FIELDS
+from proof_and_demo.env import load_env_file
+from proof_and_demo.usage import credit_summary, read_usage, usage_by_model, votes_for
+from proof_and_demo.validate_script import check_script, probe_seconds, probe_size
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(REPO_DIR, "static")
-DRAFTER_PATH = os.path.join(REPO_DIR, "draft_storyline.py")
-VOICE_PATH = os.path.join(REPO_DIR, "voice.py")
-STAGE1_PATH = os.path.join(REPO_DIR, "stage1_update.py")
-CHECK_TAKES_PATH = os.path.join(REPO_DIR, "check_takes.py")
-CUT_PATH = os.path.join(REPO_DIR, "cut_video.py")
-ASSETS_PATH = os.path.join(REPO_DIR, "make_assets.py")
-NARRATE_PATH = os.path.join(REPO_DIR, "narrate.py")
-IMPROVE_PATH = os.path.join(REPO_DIR, "improve_script.py")
-SCRIPT_NARRATION_PATH = os.path.join(REPO_DIR, "script_narration.py")  # branch L, not merged yet
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(PACKAGE_DIR)
+STATIC_DIR = os.path.join(PACKAGE_DIR, "static")
+# Each tool runs as its own process: [sys.executable, *TOOL, ...arguments], with the repo root as the current folder.
+DRAFTER_TOOL = ["-m", "proof_and_demo.draft_storyline"]
+VOICE_TOOL = ["-m", "proof_and_demo.voice"]
+STAGE1_TOOL = ["-m", "proof_and_demo.stage1_update"]
+CHECK_TAKES_TOOL = ["-m", "proof_and_demo.check_takes"]
+CUT_TOOL = ["-m", "proof_and_demo.cut_video"]
+ASSETS_TOOL = ["-m", "proof_and_demo.make_assets"]
+NARRATE_TOOL = ["-m", "proof_and_demo.narrate"]
+IMPROVE_TOOL = ["-m", "proof_and_demo.improve_script"]
+SCRIPT_NARRATION_TOOL = ["-m", "proof_and_demo.script_narration"]  # branch L, not merged yet
 SPEC_PATH = os.path.normpath(os.path.join(REPO_DIR, "..", "docs", "demo-tool-spec.md"))
 
-# Same folders the scripts write to. WORKSPACE_DIR points the app at another folder (tests/sample-workspace).
+# Same folders the scripts write to. WORKSPACE_DIR points the app at another folder (tests/sample_workspace).
 WORKSPACE_DIR = os.path.abspath(os.environ.get("WORKSPACE_DIR") or os.path.join(REPO_DIR, "..", "workspace"))
 STORYLINE_DIR = os.path.join(WORKSPACE_DIR, "storylines")
 CHECKLIST_DIR = os.path.join(WORKSPACE_DIR, "checklists")
@@ -298,7 +300,7 @@ def run_job(kind, job, command):
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as errors:
         process = subprocess.Popen(
             command,
-            cwd=REPO_DIR,  # env.py reads .env from the current folder
+            cwd=REPO_DIR,  # so -m finds the proof_and_demo package
             stdout=subprocess.PIPE,
             stderr=errors,  # a file, so a full pipe can't stall the script while we read stdout
             text=True,
@@ -373,7 +375,7 @@ def start_draft():
     for path in (idea_path, JUDGING_PATH):
         if not os.path.exists(path):
             return JSONResponse({"error": f"Missing input file: {path}"}, status_code=400)
-    command = [sys.executable, DRAFTER_PATH, idea_path, JUDGING_PATH, "--out-dir", STORYLINE_DIR]
+    command = [sys.executable, *DRAFTER_TOOL, idea_path, JUDGING_PATH, "--out-dir", STORYLINE_DIR]
     pin_active()  # the new file must not replace the one in use just by being newest
     return start_job("draft", command, idea=os.path.basename(idea_path), judging=os.path.basename(JUDGING_PATH))
 
@@ -398,7 +400,7 @@ async def start_voice(request: Request, name: str = "recording.webm"):
     os.makedirs(INBOX_DIR, exist_ok=True)
     with open(audio_path, "wb") as f:
         f.write(audio)
-    command = [sys.executable, VOICE_PATH, audio_path, "--out-dir", VOICE_DIR]
+    command = [sys.executable, *VOICE_TOOL, audio_path, "--out-dir", VOICE_DIR]
     return start_job("voice", command, audio=os.path.basename(audio_path))
 
 
@@ -409,7 +411,7 @@ def start_update(file: str, variant: int):
     if not storyline_path:
         return JSONResponse({"error": f"No such storyline: {file}"}, status_code=400)
     command = [
-        sys.executable, STAGE1_PATH, storyline_path, "--variant", str(variant),
+        sys.executable, *STAGE1_TOOL, storyline_path, "--variant", str(variant),
         "--sessions-dir", SESSIONS_DIR, "--voice-dir", VOICE_DIR, "--out-dir", CHECKLIST_DIR,
     ]
     return start_job("update", command, storyline=os.path.basename(storyline_path), variant=variant)
@@ -426,7 +428,7 @@ def start_check(checklist: str, takes: str, steps: str = ""):
         return JSONResponse({"error": "Pick at least one take from workspace/takes."}, status_code=400)
     if steps and not re.fullmatch(r"\d+(,\d+)*", steps):
         return JSONResponse({"error": 'Steps must be numbers separated by commas, like "1,2".'}, status_code=400)
-    command = [sys.executable, CHECK_TAKES_PATH, checklist_path, *take_paths, "--out-dir", CHECKS_DIR]
+    command = [sys.executable, *CHECK_TAKES_TOOL, checklist_path, *take_paths, "--out-dir", CHECKS_DIR]
     if steps:
         command += ["--steps", steps]
     return start_job("check", command, checklist=checklist, takes=[os.path.basename(p) for p in take_paths])
@@ -439,7 +441,7 @@ def start_cut(check: str, narration: str = "", title_card: bool = False, music: 
     check_path = inside(CHECKS_DIR, check, [".json"])
     if not check_path:
         return JSONResponse({"error": f"No such take check: {check}"}, status_code=400)
-    command = [sys.executable, CUT_PATH, check_path, "--out-dir", FINAL_DIR]
+    command = [sys.executable, *CUT_TOOL, check_path, "--out-dir", FINAL_DIR]
     if storyline:
         storyline_path = inside(STORYLINE_DIR, storyline, [".json"])
         if not storyline_path:
@@ -467,7 +469,7 @@ def start_cut(check: str, narration: str = "", title_card: bool = False, music: 
 def start_assets(title: str, subtitle: str = "", reuse_background: bool = False):
     if not title.strip():
         return JSONResponse({"error": "The title card needs a title."}, status_code=400)
-    command = [sys.executable, ASSETS_PATH, title.strip(), subtitle.strip(), "--out-dir", ASSETS_DIR]
+    command = [sys.executable, *ASSETS_TOOL, title.strip(), subtitle.strip(), "--out-dir", ASSETS_DIR]
     if reuse_background:
         background = inside(ASSETS_DIR, "background.png")
         if not background:
@@ -484,7 +486,7 @@ def start_narrate(file: str, variant: int):
     storyline_path = inside(STORYLINE_DIR, file)
     if not storyline_path:
         return JSONResponse({"error": f"No such storyline: {file}"}, status_code=400)
-    command = [sys.executable, NARRATE_PATH, storyline_path, "--variant", str(variant), "--out-dir", NARRATION_DIR]
+    command = [sys.executable, *NARRATE_TOOL, storyline_path, "--variant", str(variant), "--out-dir", NARRATION_DIR]
     return start_job("narrate", command, storyline=os.path.basename(storyline_path), variant=variant)
 
 
@@ -736,7 +738,7 @@ async def start_improve(request: Request):
     script_path = inside(SCRIPTS_DIR, str(body.get("file", "")), [".json"])
     if not script_path:
         return JSONResponse({"error": f"No such script: {body.get('file')}"}, status_code=400)
-    command = [sys.executable, IMPROVE_PATH, script_path, "--ids", ",".join(str(i) for i in body["ids"]), "--note", str(body["note"]).strip(),
+    command = [sys.executable, *IMPROVE_TOOL, script_path, "--ids", ",".join(str(i) for i in body["ids"]), "--note", str(body["note"]).strip(),
                "--out-dir", IMPROVEMENTS_DIR]
     with open(script_path, encoding="utf-8") as f:
         source = json.load(f).get("source") or {}
@@ -752,7 +754,7 @@ def start_plan(check: str, storyline: str = "", variant: int = 1):
     check_path = inside(CHECKS_DIR, check, [".json"])
     if not check_path:
         return JSONResponse({"error": f"No such take check: {check}"}, status_code=400)
-    command = [sys.executable, CUT_PATH, check_path, "--plan", "--scripts-dir", SCRIPTS_DIR]
+    command = [sys.executable, *CUT_TOOL, check_path, "--plan", "--scripts-dir", SCRIPTS_DIR]
     card_path = inside(ASSETS_DIR, "title-card.png")
     if card_path:
         command += ["--title-card", card_path]  # the plan includes the title card when there is one (the preview is opt-in, so it isn't passed)
@@ -770,7 +772,7 @@ def start_write(file: str):
     script_path = inside(SCRIPTS_DIR, file, [".json"])
     if not script_path:
         return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
-    return start_job("write", [sys.executable, SCRIPT_NARRATION_PATH, script_path], script=file)
+    return start_job("write", [sys.executable, *SCRIPT_NARRATION_TOOL, script_path], script=file)
 
 
 @app.post("/api/script/speak")
@@ -780,7 +782,7 @@ def start_speak(file: str, stand_in: bool = False, confirm: bool = False):
     script_path = inside(SCRIPTS_DIR, file, [".json"])
     if not script_path:
         return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
-    command = [sys.executable, NARRATE_PATH, "--script", script_path]
+    command = [sys.executable, *NARRATE_TOOL, "--script", script_path]
     if stand_in:
         command.append("--stand-in")
     else:
@@ -802,7 +804,7 @@ def estimate_narration(file: str):
     if not script_path:
         return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
     try:
-        run = subprocess.run([sys.executable, NARRATE_PATH, "--script", script_path], cwd=REPO_DIR, capture_output=True, text=True,
+        run = subprocess.run([sys.executable, *NARRATE_TOOL, "--script", script_path], cwd=REPO_DIR, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=120, env={**os.environ, "PYTHONUTF8": "1"})
         found = re.search(r"Narrating (\d+) lines: (\d+) characters.*?about \$([\d.]+)", run.stdout)
     except (OSError, subprocess.TimeoutExpired):
@@ -823,7 +825,7 @@ def start_render(file: str, music: str = "", reuse: bool = False):
     script_path = inside(SCRIPTS_DIR, file, [".json"])
     if not script_path:
         return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
-    command = [sys.executable, CUT_PATH, "--script", script_path, "--out-dir", FINAL_DIR]
+    command = [sys.executable, *CUT_TOOL, "--script", script_path, "--out-dir", FINAL_DIR]
     if music:
         music_path = inside(MUSIC_DIR, music, MUSIC_EXTENSIONS)
         if not music_path:
@@ -862,7 +864,7 @@ async def start_revise(request: Request):
     brief_path = os.path.join(BRIEFS_DIR, f"{datetime.now():%Y-%m-%d-%H%M%S}.md")
     with open(brief_path, "w", encoding="utf-8") as f:
         f.write(str(body["brief"]).strip() + "\n")
-    command = [sys.executable, DRAFTER_PATH, "--revise", storyline_path, "--variant", str(body.get("variant", 1)), "--brief", brief_path,
+    command = [sys.executable, *DRAFTER_TOOL, "--revise", storyline_path, "--variant", str(body.get("variant", 1)), "--brief", brief_path,
                "--out-dir", STORYLINE_DIR]
     checklist_path = inside(CHECKLIST_DIR, str(body.get("checklist", "")), [".json"])
     if checklist_path:

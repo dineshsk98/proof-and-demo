@@ -11,9 +11,9 @@ from datetime import datetime
 from openai import OpenAI
 from PIL import Image
 
-from env import load_env_file
-from redact import redact_text
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.redact import redact_text
+from proof_and_demo.usage import log_call
 
 # Writes the voice-over for a script from `cut_video.py --plan`: one line per segment, sized to fill it.
 # Sent to Meta: the prompt, the storyline's hook and steps and the checked end states (all through redact_text),
@@ -29,8 +29,8 @@ LINE_GAP_S = 0.3  # the quiet after each line (cut_video.py's LINE_GAP_S): a lin
 MAX_REWRITES = 1  # one more call for lines whose length is out of range; after that the lines are kept as they are
 SEND_WIDTH = 1280  # frames wider than this (the title card) are shrunk before sending
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "narration-script.md")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "narration-script.md")
 REWRITE_MARKER = "<!-- rewrite:"
 
 

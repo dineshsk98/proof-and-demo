@@ -6,8 +6,8 @@ from datetime import datetime
 
 import requests
 
-from env import load_env_file
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.usage import log_call
 
 # One instrumental music bed (about 3 minutes) for the final cut, from ElevenLabs Eleven Music.
 # Only the style prompt below goes to ElevenLabs: no project text, no screenshots.
@@ -24,7 +24,7 @@ SECONDS = 180
 PRICE_PER_MINUTE_USD = 0.15  # ElevenLabs API pricing page, checked 2026-11-03
 TIMEOUT_SECONDS = 600
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, above this package
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "assets", "music"))
 
 # The stand-in: a quiet D chord (73, 110, 147, 294 Hz) over soft low noise, faded in and out.

@@ -10,7 +10,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.normpath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, REPO_DIR)
-from redact import redact_image  # noqa: E402
+from proof_and_demo.redact import redact_image  # noqa: E402
 
 # Checks a video made by cut_video.py from the synthetic takes (make_samples.py):
 # 1. format and duration match the cut log

@@ -15,8 +15,8 @@ os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
-import check_narration  # noqa: E402
-import voice  # noqa: E402
+from proof_and_demo import check_narration  # noqa: E402
+from proof_and_demo import voice  # noqa: E402
 
 FAKE_KEY = "fake-key-for-tests"
 TMP = tempfile.mkdtemp(prefix="narration-check-test-")

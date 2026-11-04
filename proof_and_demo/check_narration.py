@@ -8,9 +8,9 @@ import sys
 import tempfile
 from datetime import datetime
 
-from env import load_env_file
-from usage import log_call
-from voice import MODEL, check_wav, convert_to_wav, estimate_cost, transcribe
+from proof_and_demo.env import load_env_file
+from proof_and_demo.usage import log_call
+from proof_and_demo.voice import MODEL, check_wav, convert_to_wav, estimate_cost, transcribe
 
 # Voice Transcribe listens to each narration clip (the ElevenLabs voice is not a Meta service) and the
 # result is compared with the line the clip was meant to say. Only the narration audio goes to Meta.

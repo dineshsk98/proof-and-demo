@@ -11,8 +11,8 @@ from datetime import datetime
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from redact import redact_image, redact_text
-from usage import credit_summary, votes_for
+from proof_and_demo.redact import redact_image, redact_text
+from proof_and_demo.usage import credit_summary, votes_for
 
 # Stage 3, the final cut: picks the stretches the take checker chose, opens with the title card (or, with --preview,
 # a labelled preview of the payoff), eases in on wherever the screen changes, trims still screens, speeds up and
@@ -22,7 +22,7 @@ from usage import credit_summary, votes_for
 # and --script renders a script exactly as it says.
 # Everything here runs on this laptop. No cloud calls.
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, above this package
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "final"))
 
 W, H, FPS = 1920, 1080, 30

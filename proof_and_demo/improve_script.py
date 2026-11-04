@@ -6,18 +6,19 @@ from datetime import datetime
 
 from openai import OpenAI
 
-from env import load_env_file
-from redact import redact_text
-from script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
-from usage import log_call
-from validate_script import out_seconds, word_count
+from proof_and_demo.env import load_env_file
+from proof_and_demo.redact import redact_text
+from proof_and_demo.script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
+from proof_and_demo.usage import log_call
+from proof_and_demo.validate_script import out_seconds, word_count
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
 MAX_OUTPUT_TOKENS = 16000  # a few lines of text, plus reasoning (which counts toward this)
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "improve-script.md")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(PACKAGE_DIR)
+PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "improve-script.md")
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "scripts", "improvements"))
 
 SCHEMA = {

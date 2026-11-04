@@ -1,7 +1,7 @@
 # Offline tests for draft_storyline.py: the Spark wait messages, and --revise keeping every
 # variant of the source file. A fake client that sleeps, so nothing is sent to Meta.
 # The heartbeat interval is patched down to 0.1 s.
-# Run: python test_draft_storyline.py
+# Run: python tests/storyline/test_draft_storyline.py
 import contextlib
 import io
 import json
@@ -15,7 +15,8 @@ import types
 
 os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py logs the fake calls here, not in the real workspace
 
-import draft_storyline
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")))  # the repo root
+from proof_and_demo import draft_storyline  # noqa: E402
 
 draft_storyline.HEARTBEAT_SECONDS = 0.1
 os.environ["MODEL_API_KEY"] = "fake-key-for-tests"
@@ -105,7 +106,7 @@ def test_lines_arrive_while_running():
     # Like the web app: run as a child process with a pipe and read lines as they come.
     # PYTHONUNBUFFERED is not set here, so this checks that flush=True alone is enough.
     child = (
-        "import time, types, draft_storyline as d\n"
+        "import time, types, proof_and_demo.draft_storyline as d\n"
         "d.HEARTBEAT_SECONDS = 0.2\n"
         "class R:\n"
         "    def create(self, **kw):\n"
@@ -116,7 +117,7 @@ def test_lines_arrive_while_running():
     )
     env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
     started = time.monotonic()
-    process = subprocess.Popen([sys.executable, "-c", child], cwd=os.path.dirname(os.path.abspath(__file__)),
+    process = subprocess.Popen([sys.executable, "-c", child], cwd=os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")),
                                stdout=subprocess.PIPE, text=True, encoding="utf-8", env=env)
     arrivals = [(time.monotonic() - started, line.rstrip()) for line in process.stdout]
     process.wait()

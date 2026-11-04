@@ -7,17 +7,17 @@ from datetime import datetime
 
 from openai import OpenAI
 
-from env import load_env_file
+from proof_and_demo.env import load_env_file
 
 try:
-    from redact import redact_text  # branch C: redact_text(text) -> (clean_text, findings)
+    from proof_and_demo.redact import redact_text  # branch C: redact_text(text) -> (clean_text, findings)
 except ModuleNotFoundError as e:
     if e.name != "redact":
         raise  # redact.py exists but something it imports is missing
     sys.exit("redaction module missing: merge local-redaction first")
 
-from script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
-from usage import log_call
+from proof_and_demo.script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
+from proof_and_demo.usage import log_call
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
@@ -28,8 +28,9 @@ NEEDS_EVIDENCE = ["works", "partly works", "flaky"]
 MAX_SESSION_DOCS = 5
 MAX_VOICE_NOTES = 5
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "stage1.md")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(PACKAGE_DIR)
+PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "stage1.md")
 WORKSPACE_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace"))
 DEFAULT_SESSIONS_DIR = os.path.join(WORKSPACE_DIR, "sessions")
 DEFAULT_VOICE_DIR = os.path.join(WORKSPACE_DIR, "voice-notes")

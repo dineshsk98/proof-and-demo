@@ -1,8 +1,10 @@
 import os
 
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def load_env_file(path=".env"):
-    # Minimal .env reader: KEY=value lines, ignoring blanks and # comments.
+
+def load_env_file(path=os.path.join(REPO_DIR, ".env")):
+    # Minimal .env reader: KEY=value lines, ignoring blanks and # comments. The .env file sits in the repo root.
     if not os.path.exists(path):
         return
     with open(path, encoding="utf-8") as f:

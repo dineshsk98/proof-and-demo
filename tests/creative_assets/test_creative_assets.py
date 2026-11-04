@@ -1,6 +1,6 @@
 # Offline tests for make_assets.py (title card, chapters, split, add-chapters) and narrate.py: requests.post is replaced by a fake, so nothing is sent.
 # Needs ffmpeg and ffprobe on PATH (the fake ElevenLabs reply is a real MP3 made with ffmpeg).
-# Run: python test_creative_assets.py
+# Run: python tests/creative_assets/test_creative_assets.py
 import base64
 import contextlib
 import io
@@ -16,8 +16,9 @@ os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py 
 
 from PIL import Image
 
-import make_assets
-import narrate
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")))  # the repo root
+from proof_and_demo import make_assets  # noqa: E402
+from proof_and_demo import narrate  # noqa: E402
 
 SECRET = "sk-test-PLANTED-0000-abcdefgh"  # long enough for redact.py's sk- pattern
 FAKE_KEY = "fake-key-for-tests"

@@ -2,9 +2,9 @@
 
 Per-script detail for Proof & Demo. The [README](README.md) covers what it is, how to install it and the end-to-end flow.
 
-Every script that calls Meta reads `MODEL_API_KEY` from `.env` (through `env.py`, which reads `.env` from the current folder, so run the scripts from the repo folder). They use `muse-spark-1.3`, `muse-spark-1.1`, `muse-image-1.0` or `muse-voice-transcribe-1.0` on the standard tier, never a `-contributor` model. Text and images are redacted locally first; audio is sent as it is.
+Every tool is a module in the `proof_and_demo/` package, run from the repo folder as `python -m proof_and_demo.<tool>`. Every tool that calls Meta reads `MODEL_API_KEY` from `.env` in the repo folder (through `env.py`). They use `muse-spark-1.3`, `muse-spark-1.1`, `muse-image-1.0` or `muse-voice-transcribe-1.0` on the standard tier, never a `-contributor` model. Text and images are redacted locally first; audio is sent as it is.
 
-By default, the scripts read and write a `workspace/` folder next to the repo folder (`../workspace/`). Most scripts take `--out-dir` to write elsewhere. The web app's `WORKSPACE_DIR` environment variable points the app at another folder, e.g. `tests/sample-workspace`.
+By default, the scripts read and write a `workspace/` folder next to the repo folder (`../workspace/`). Most scripts take `--out-dir` to write elsewhere. The web app's `WORKSPACE_DIR` environment variable points the app at another folder, e.g. `tests/sample_workspace`.
 
 Contents:
 - [smoke_test.py](#smoke_testpy): check your key
@@ -28,30 +28,30 @@ Contents:
 
 ## smoke_test.py
 
-`python smoke_test.py` makes one minimal text call to `muse-spark-1.3` and prints the reply and the token usage. If `MODEL_API_KEY` is missing, it stops with one clear error.
+`python -m proof_and_demo.smoke_test` makes one minimal text call to `muse-spark-1.3` and prints the reply and the token usage. If `MODEL_API_KEY` is missing, it stops with one clear error.
 
 ## draft_storyline.py
 
-**Draft:** `python draft_storyline.py <idea file> <rules file>` writes one storyline variant per demo structure in `prompts/structures.md` (each a `## Name` heading plus a description) in one Muse Spark call.
-- The prompt is in `prompts/storyline.md`. The review checklist added under each variant in the `.md` is in `prompts/review-checklist.md`.
+**Draft:** `python -m proof_and_demo.draft_storyline <idea file> <rules file>` writes one storyline variant per demo structure in `proof_and_demo/prompts/structures.md` (each a `## Name` heading plus a description) in one Muse Spark call.
+- The prompt is in `proof_and_demo/prompts/storyline.md`. The review checklist added under each variant in the `.md` is in `proof_and_demo/prompts/review-checklist.md`.
 - Both input files are redacted locally first.
 - Output: `workspace/storylines/storylines-<timestamp>.json` and `.md`. A name already in use gets `-2`, `-3`, so nothing is overwritten.
 - `--structures <md>` uses another structures file.
 
 **Pick and combine:**
 - `--pick <name> ...` drafts only some structures.
-- `--combine` (with `--pick` and at least two names) drafts one hybrid: the first picked structure is the spine, and the others contribute beats. The instructions are in `prompts/combine.md`, and the output is `hybrid-<timestamp>.json` and `.md`.
+- `--combine` (with `--pick` and at least two names) drafts one hybrid: the first picked structure is the spine, and the others contribute beats. The instructions are in `proof_and_demo/prompts/combine.md`, and the output is `hybrid-<timestamp>.json` and `.md`.
 
-**Claim check:** `--claim-check` makes one more call after a passing draft. It lists every claim the storyline makes that the idea file doesn't state (credits, dates, features, numbers) and writes `<output>-claims.md`. It is a report, not a gate. The prompt is in `prompts/claim-check.md`.
+**Claim check:** `--claim-check` makes one more call after a passing draft. It lists every claim the storyline makes that the idea file doesn't state (credits, dates, features, numbers) and writes `<output>-claims.md`. It is a report, not a gate. The prompt is in `proof_and_demo/prompts/claim-check.md`.
 
-**Revise once things work:** `python draft_storyline.py --revise <storyline JSON> [--variant N] --brief <md> [--checklist <JSON>] [--idea <md>] [--rules <md>] [--claim-check]`.
+**Revise once things work:** `python -m proof_and_demo.draft_storyline --revise <storyline JSON> [--variant N] --brief <md> [--checklist <JSON>] [--idea <md>] [--rules <md>] [--claim-check]`.
 - One Spark call rewrites the chosen variant (default 1) from what the checklist says really works and the brief's notes.
 - The checklist defaults to the newest one in `workspace/checklists/` made for that storyline and variant. Without one, it stops and says to run `stage1_update.py` or pass `--checklist`.
 - The idea defaults to `workspace/inputs/idea.md`, and the rules to `workspace/inputs/judging.md`.
 - A brief line still holding the unfinished-fact marker (`UNFILLED` at the top of `draft_storyline.py`) is left out, unless it is a ticked box (`- [x]`): that counts as true, with only the marker removed.
 - Output: `revised-<timestamp>.json` and `.md`. This is the whole source file: every top-level field and every variant in the same order, with only the chosen variant replaced. In the `.md`, that variant's heading is marked "(revised <date> from the brief)".
 - The checks and `--claim-check` cover only the revised variant. In revise mode the claim check compares it against the idea, checklist, brief and rules.
-- The prompt is in `prompts/revise.md`.
+- The prompt is in `proof_and_demo/prompts/revise.md`.
 
 **Checks on every reply:** a reply that fails one is saved as `-raw.txt`, and the script exits non-zero, with no automatic retry.
 - the required fields are present, with 4 to 6 steps per variant
@@ -69,7 +69,7 @@ The limits are named constants at the top of the file.
 
 ## redact.py
 
-`python redact.py <file> [-o <output>]` hides secrets in a text file or a screenshot, with no cloud calls. It writes:
+`python -m proof_and_demo.redact <file> [-o <output>]` hides secrets in a text file or a screenshot, with no cloud calls. It writes:
 - `<name>.redacted<ext>` for a text file, or `<name>.redacted.png` for an image (or the `-o` path)
 - a `.leak-report.json` beside it, with counts per kind, boxes and masked previews
 
@@ -82,14 +82,14 @@ Recall test on synthetic screenshots with planted fake secrets: `python tests/re
 
 ## voice.py
 
-`python voice.py <audio file>` turns one voice note (m4a, mp3, webm, wav, ...) into text with Voice Transcribe. It writes `workspace/voice-notes/<timestamp>.txt`, plus a `.json` sidecar with the turns, and prints the estimated cost.
+`python -m proof_and_demo.voice <audio file>` turns one voice note (m4a, mp3, webm, wav, ...) into text with Voice Transcribe. It writes `workspace/voice-notes/<timestamp>.txt`, plus a `.json` sidecar with the turns, and prints the estimated cost.
 - The audio is converted locally to 24 kHz mono WAV and sent as it is; audio can't be redacted.
 - The limit is 10 minutes and 32 MB after conversion.
 - It needs ffmpeg on PATH (`winget install Gyan.FFmpeg`).
 
 ## stage1_update.py
 
-`python stage1_update.py <storyline JSON> [--variant N]` updates the step checklist.
+`python -m proof_and_demo.stage1_update <storyline JSON> [--variant N]` updates the step checklist.
 
 What it reads:
 - the newest session docs in `workspace/sessions/*.md` (`--sessions-dir` for another folder)
@@ -104,11 +104,11 @@ It takes the 5 most recently changed of each (`MAX_SESSION_DOCS` and `MAX_VOICE_
 
 The checks reject any evidence quote that isn't copied verbatim from the redacted docs.
 
-Output: `workspace/checklists/<timestamp>.json`, with a `source` field naming the storyline path and variant it was made for, and a Markdown readiness board beside it. The prompt is in `prompts/stage1.md`.
+Output: `workspace/checklists/<timestamp>.json`, with a `source` field naming the storyline path and variant it was made for, and a Markdown readiness board beside it. The prompt is in `proof_and_demo/prompts/stage1.md`.
 
 ## check_takes.py
 
-`python check_takes.py <checklist JSON> <take.mp4> [more takes] [--steps 1,2]` checks recorded takes against each step's stated expected end state.
+`python -m proof_and_demo.check_takes <checklist JSON> <take.mp4> [more takes] [--steps 1,2]` checks recorded takes against each step's stated expected end state.
 
 **Finding changes and waits (local):**
 - Each take (e.g. a Game Bar or Snipping Tool MP4) is re-encoded to a constant 30 fps with ffmpeg.
@@ -116,7 +116,7 @@ Output: `workspace/checklists/<timestamp>.json`, with a `source` field naming th
 - The thresholds are named constants at the top of `check_takes.py`.
 
 **Checking with Muse Spark:**
-- One settled frame just after each change, plus the first frame, is redacted with `redact_image`, shrunk to 1280 px wide, and sent. At most 10 frames go per take: the first and the biggest changes. The prompt is in `prompts/take-check.md`.
+- One settled frame just after each change, plus the first frame, is redacted with `redact_image`, shrunk to 1280 px wide, and sent. At most 10 frames go per take: the first and the biggest changes. The prompt is in `proof_and_demo/prompts/take-check.md`.
 - Each take gets three independent checks, as (model, frame order): `muse-spark-1.3` forward, `muse-spark-1.3` reverse, and `muse-spark-1.1` forward. The models are constants at the top of `check_takes.py`.
 - A step passes when at least 2 of the 3 checks find its end state. It fails when none does and at least 2 looked and found nothing. Anything else is "unsure", and becomes a question for the builder. A reply that fails its checks counts as a vote that found nothing, not as a fail.
 - On a pass, the proof frame is the earliest frame that at least 2 passing checks listed. If no frame has 2, it is the earliest any passing check listed.
@@ -128,30 +128,30 @@ Output: `workspace/checklists/<timestamp>.json`, with a `source` field naming th
 
 ## make_assets.py
 
-Each run makes exactly one of: a title card, chapter cards, a before/after card, or a script with chapters added. Every image prompt is in `prompts/` (`--prompt-file` to use another); lines starting with `#` are notes and are not sent. The prompt is redacted with `redact_text` before the call, and Muse Image's web search, image search and shell tools are turned off. Each Muse Image call is $0.01.
+Each run makes exactly one of: a title card, chapter cards, a before/after card, or a script with chapters added. Every image prompt is in `proof_and_demo/prompts/` (`--prompt-file` to use another); lines starting with `#` are notes and are not sent. The prompt is redacted with `redact_text` before the call, and Muse Image's web search, image search and shell tools are turned off. Each Muse Image call is $0.01.
 
-**Title card and thumbnail:** `python make_assets.py "<title>" "<subtitle>"` makes `workspace/assets/title-card.png` (1920x1080) and `thumbnail.png` (1280x720).
+**Title card and thumbnail:** `python -m proof_and_demo.make_assets "<title>" "<subtitle>"` makes `workspace/assets/title-card.png` (1920x1080) and `thumbnail.png` (1280x720).
 - One Muse Image call paints a text-free background, saved as `workspace/assets/background.png`.
 - Pillow then draws the title and subtitle on top, because image models misspell and smear text.
-- The image prompt is `prompts/title-card.md`.
+- The image prompt is `proof_and_demo/prompts/title-card.md`.
 - Re-run with `--background workspace/assets/background.png` to change the text without a call.
 
-**Chapter cards:** `python make_assets.py --chapters <storyline JSON> [--variant N]` makes one 1920x1080 card per step.
+**Chapter cards:** `python -m proof_and_demo.make_assets --chapters <storyline JSON> [--variant N]` makes one 1920x1080 card per step.
 - Pillow draws "Step N" and the step title over a text-free Muse Image background, with one call per card.
 - Output: `workspace/assets/chapters/<timestamp>/step-<n>.png` plus `chapters/<timestamp>.json`.
-- Only the style prompt (`prompts/chapter-card.md`, one for all cards so they look like a set) with the step title filled in goes to Muse Image. The title is redacted first, and the redacted title is also what the card shows.
+- Only the style prompt (`proof_and_demo/prompts/chapter-card.md`, one for all cards so they look like a set) with the step title filled in goes to Muse Image. The title is redacted first, and the redacted title is also what the card shows.
 
-**Before/after card:** `python make_assets.py --split "<left label>" "<right label>"` makes `workspace/assets/before-after.png` (1920x1080).
-- One background (`prompts/split-card.md`, saved as `before-after-background.png`), with the left half greyed and darker ("before") and the right in colour ("after").
+**Before/after card:** `python -m proof_and_demo.make_assets --split "<left label>" "<right label>"` makes `workspace/assets/before-after.png` (1920x1080).
+- One background (`proof_and_demo/prompts/split-card.md`, saved as `before-after-background.png`), with the left half greyed and darker ("before") and the right in colour ("after").
 - Pillow draws the labels.
 - `--background <png>` reuses a saved background for free.
 
-**Adding chapters to a script:** `python make_assets.py --add-chapters <script JSON> <chapters JSON>` writes a new timestamped script file in the script's folder, with a 2 s `chapter` segment before each step's first footage segment. The old script is never changed. `cut_video.py --script` renders the chapter cards.
+**Adding chapters to a script:** `python -m proof_and_demo.make_assets --add-chapters <script JSON> <chapters JSON>` writes a new timestamped script file in the script's folder, with a 2 s `chapter` segment before each step's first footage segment. The old script is never changed. `cut_video.py --script` renders the chapter cards.
 
 ## make_music.py
 
-- `python make_music.py --stand-in` makes a local placeholder bed (a soft chord), with no network.
-- `python make_music.py --yes` makes one 3-minute instrumental bed with ElevenLabs Eleven Music (`music_v2_5`, falling back once to `music_v1` if that model rejects the request with a 422). It costs about $0.45 at $0.15 a minute, and only the style prompt is sent.
+- `python -m proof_and_demo.make_music --stand-in` makes a local placeholder bed (a soft chord), with no network.
+- `python -m proof_and_demo.make_music --yes` makes one 3-minute instrumental bed with ElevenLabs Eleven Music (`music_v2_5`, falling back once to `music_v1` if that model rejects the request with a 422). It costs about $0.45 at $0.15 a minute, and only the style prompt is sent.
 - Without `--yes` it prints the cost and sends nothing.
 
 Both write to `workspace/assets/music/`. `--seconds` and `--prompt` change the length and the style prompt.
@@ -160,12 +160,12 @@ Both write to `workspace/assets/music/`. `--seconds` and `--prompt` change the l
 
 ElevenLabs text-to-speech (`eleven_multilingual_v2`) in the voice in `ELEVENLABS_VOICE_ID`, at speed 0.9 (`VOICE_SPEED`). ElevenLabs is not a Meta service. Every line goes through `redact_text` first.
 
-**Per storyline step:** `python narrate.py <storyline JSON> [--variant N]` voices each step's `narration`.
+**Per storyline step:** `python -m proof_and_demo.narrate <storyline JSON> [--variant N]` voices each step's `narration`.
 - It sends straight away: there is no `--yes` in this mode. It prints the character count first.
 - Output: `workspace/assets/narration/<timestamp>/step-<n>.mp3`, plus `<timestamp>.json` (`{steps:[{number, file, duration_s}]}`, with durations from ffprobe).
 - It warns when a clip is longer than the step's `target_seconds`.
 
-**Per script line:** `python narrate.py --script <script> --yes` voices each line of a script.
+**Per script line:** `python -m proof_and_demo.narrate --script <script> --yes` voices each line of a script.
 - It uses request stitching (each line is sent with the ids of the lines before it and the text of the next one), so the lines sound like one read.
 - Silence around each line is trimmed. The clips go to `workspace/assets/narration/<timestamp>/`, and the result is a new script file next to the input, with `audio`, `audio_s` and a "narration voice" credit on each line.
 - Without `--yes` it prints the character count and cost and sends nothing.
@@ -181,7 +181,7 @@ Everything here runs locally, with no cloud calls. The output is in `workspace/f
 - `<ts>.cut-log.json`
 - `<ts>.leak-report.json`
 
-**Final cut from a take check:** `python cut_video.py <take-check JSON> [--narration <JSON>] [--title-card <PNG>] [--storyline <JSON> [--variant N]] [--music <file>] [--preview]` cuts one MP4 from the takes the take checker chose. It uses `one_take_pass` when there is one, otherwise each step's `best[]` stretch.
+**Final cut from a take check:** `python -m proof_and_demo.cut_video <take-check JSON> [--narration <JSON>] [--title-card <PNG>] [--storyline <JSON> [--variant N]] [--music <file>] [--preview]` cuts one MP4 from the takes the take checker chose. It uses `one_take_pass` when there is one, otherwise each step's `best[]` stretch.
 - **Labels:** waits are sped up 4x, and every second of footage is labelled: "1x ONE TAKE", "SPED UP 4x", "STITCH: take a → take b" or "HELD FRAME".
 - **Redaction:** secrets are boxed locally. `redact_image` reads one frame per stable stretch between screen changes (plus one more per 10 s), and the boxes stay on until the next change. Proof frames and chapter cards are redacted too.
 - **Narration:** `--narration` takes the JSON from `narrate.py <storyline>`. Each step's clip starts with its step and is never cut short: the step's waits are slowed (never below 1x), or its last frame is held. The take audio stays under it, ducked to 20% (fast down, slow back up), and is muted in sped-up waits.
@@ -197,13 +197,13 @@ Everything here runs locally, with no cloud calls. The output is in `workspace/f
 **Music:** `--music <file>` adds a bed (MP3 or WAV) brought to -30 LUFS, which fades in and out and ducks under narration.
 
 **Narration script:** the cut can be planned as a script, in four steps with one file passed between them. Each step writes a new file.
-1. `python cut_video.py <take-check JSON> --plan --storyline <JSON> [--variant N] [--title-card <PNG>] [--preview]` lays the cut out as `workspace/scripts/<ts>.json` (`--scripts-dir` for another folder) without rendering.
+1. `python -m proof_and_demo.cut_video <take-check JSON> --plan --storyline <JSON> [--variant N] [--title-card <PNG>] [--preview]` lays the cut out as `workspace/scripts/<ts>.json` (`--scripts-dir` for another folder) without rendering.
    - It has segments in video order (preview with `--preview`, title with `--title-card`, footage, waits, proof), each with one frame redacted locally.
    - Short footage is joined to a neighbour, and long footage is split at a screen change, so each segment fits one spoken line.
    - A sped-up wait ends as soon as its outcome appears. The still screen after it is trimmed and labelled, never sped up.
-2. `python script_narration.py <script>` writes the lines (see [script_narration.py](#script_narrationpy)).
-3. `python narrate.py --script <script> --yes` voices them (see [narrate.py](#narratepy)). Optionally, `python check_narration.py <script>` checks them (see [check_narration.py](#check_narrationpy)), and `make_assets.py --add-chapters` adds chapter cards.
-4. `python cut_video.py --script <script> [--music <file>] [--reuse-redaction <leak report>]` renders exactly what the script says.
+2. `python -m proof_and_demo.script_narration <script>` writes the lines (see [script_narration.py](#script_narrationpy)).
+3. `python -m proof_and_demo.narrate --script <script> --yes` voices them (see [narrate.py](#narratepy)). Optionally, `python -m proof_and_demo.check_narration <script>` checks them (see [check_narration.py](#check_narrationpy)), and `make_assets.py --add-chapters` adds chapter cards.
+4. `python -m proof_and_demo.cut_video --script <script> [--music <file>] [--reuse-redaction <leak report>]` renders exactly what the script says.
    - A line is never cut: a wait is slowed, footage runs on into the still screen the next segment skips, or the last frame is held.
    - There is at least 0.3 s between lines.
    - Labels are worked out from what the cut really does. If the script's label differs, the cut uses the true one and prints a warning.
@@ -216,16 +216,16 @@ Everything here runs locally, with no cloud calls. The output is in `workspace/f
 
 ## script_narration.py
 
-`python script_narration.py <script>` sends Muse Spark the script's redacted frames, the storyline steps the cut shows, each step's expected end state, and each segment's kind and length, all text through `redact_text`. It needs a script planned with `--storyline`.
+`python -m proof_and_demo.script_narration <script>` sends Muse Spark the script's redacted frames, the storyline steps the cut shows, each step's expected end state, and each segment's kind and length, all text through `redact_text`. It needs a script planned with `--storyline`.
 - It writes one line per segment, filling 70–100% of the segment's time at the script's words per second. Lines out of that range get one more rewrite call; after that they are kept as they are.
 - The caption is set to the spoken line, any old audio is dropped, and each line gets a "narration line" credit.
 - The result is a new script file next to the input. It prints the tokens and an estimated cost.
 
-`--show-prompt` prints what would be sent and sends nothing. The prompt is in `prompts/narration-script.md`.
+`--show-prompt` prints what would be sent and sends nothing. The prompt is in `proof_and_demo/prompts/narration-script.md`.
 
 ## check_narration.py
 
-`python check_narration.py <script JSON> [--out-dir <folder>]` listens to each segment's narration clip (`audio`) with Voice Transcribe, and compares what it hears with the segment's `narration` line.
+`python -m proof_and_demo.check_narration <script JSON> [--out-dir <folder>]` listens to each segment's narration clip (`audio`) with Voice Transcribe, and compares what it hears with the segment's `narration` line.
 - Each checked segment gets `asr`: `text`, `match` (matched words over the longer of the two word lists, 0 to 1), `flagged` (the words that differ, e.g. "expected -> heard") and `words`. It also gets a "narration check" credit.
 - The result is a new timestamped script file next to the input (or in `--out-dir`), never written over the old one. It prints each match and the estimated cost.
 - Only the narration audio goes to Meta. A clip that fails is left unchecked, and the others go on.
@@ -247,14 +247,14 @@ It needs ffmpeg on PATH.
 - a total over 180 s
 - an `asr` match under 90%
 
-**Improve:** `python improve_script.py <script> --ids s03,s05 --note "shorter" [--storyline <JSON>]` sends the chosen lines, their lengths, the note and the storyline's text, all through `redact_text`, to one Muse Spark call.
+**Improve:** `python -m proof_and_demo.improve_script <script> --ids s03,s05 --note "shorter" [--storyline <JSON>]` sends the chosen lines, their lengths, the note and the storyline's text, all through `redact_text`, to one Muse Spark call.
 - The storyline defaults to the one the script names.
 - It writes proposals to `workspace/scripts/improvements/<timestamp>.json` for you to accept or reject, and changes no script.
-- The prompt is in `prompts/improve-script.md`.
+- The prompt is in `proof_and_demo/prompts/improve-script.md`.
 
 ## app.py (the web app)
 
-`python app.py` serves the web app at http://127.0.0.1:8000, on this machine only. It is plain static HTML and JS (`static/`) over FastAPI JSON endpoints.
+`python -m proof_and_demo.app` serves the web app at http://127.0.0.1:8000, on this machine only. It is plain static HTML and JS (`proof_and_demo/static/`) over FastAPI JSON endpoints.
 
 **The active storyline:**
 - The Storyline page has a picker of every storyline file (`storylines-*`, `hybrid-*`, `revised-*`, `edited-*` and `storyline-*` in `workspace/storylines/`), newest first, and a button per variant.
@@ -263,7 +263,7 @@ It needs ffmpeg on PATH.
 - When a draft, a revision or a saved edit makes a new file, the app keeps working from the current one and asks "Use the new file now?".
 
 **Jobs:**
-- Buttons run the scripts as background jobs: one runner in `app.py`, one job of each kind at a time, and the page polls `/api/jobs`.
+- Buttons run the tools as background jobs (`python -m proof_and_demo.<tool>`, from the repo folder): one runner in `app.py`, one job of each kind at a time, and the page polls `/api/jobs`.
 - While a job runs, its button is off and says "Running…", and its status line shows a spinner, the job's name and a running timer. After 60 s with no output it says so.
 - A job's printed lines show while it runs (redaction counts, tokens, cost, the Spark heartbeat). Cuts and renders show a progress bar.
 - Each Meta or ElevenLabs job is a live, paid call.
@@ -326,16 +326,20 @@ Every test below is offline: nothing is sent to Meta or ElevenLabs. Most need ff
 
 | What | Command |
 |---|---|
-| Storyline drafter heartbeat and `--revise` | `python test_draft_storyline.py` |
-| Stage 1 checklist | `python test_stage1_update.py` |
-| Title card, chapters, split, add-chapters, narration | `python test_creative_assets.py` |
+| Storyline drafter heartbeat and `--revise` | `python tests/storyline/test_draft_storyline.py` |
+| Stage 1 checklist | `python tests/stage1/test_stage1_update.py` |
+| Title card, chapters, split, add-chapters, narration | `python tests/creative_assets/test_creative_assets.py` |
 | Redaction recall | `python tests/redaction/recall_test.py` |
 | Take checker | `python tests/take_check/test_check_takes.py` |
-| Reusing redaction | `python tests/final-cut/test_reuse_redaction.py` |
-| Final cut, on synthetic takes | `python tests/final-cut/make_samples.py`, then `python cut_video.py tests/final-cut/sample-check.json`, then `python tests/final-cut/check_cut.py <cut log>` |
-| Narration lines | `python tests/narration-script/test_script_narration.py` |
-| Narrating a script | `python tests/narration-script/test_narrate_script.py` |
+| Narration loudness in the final cut | `python tests/final_cut/test_narration_level.py` |
+| Reusing redaction | `python tests/final_cut/test_reuse_redaction.py` |
+| Final cut, on synthetic takes | `python tests/final_cut/make_samples.py`, then `python -m proof_and_demo.cut_video tests/final_cut/sample-check.json --out-dir <folder>`, then `python tests/final_cut/check_cut.py <cut log>` |
+| Narration lines | `python tests/narration_script/test_script_narration.py` |
+| Narrating a script | `python tests/narration_script/test_narrate_script.py` |
 | Narration check | `python tests/narration_check/test_check_narration.py` |
+| Meta credits and the usage log | `python tests/meta_credits/test_meta_credits.py` |
 | Script editor | `python tests/script_editor/test_script_editor.py` |
 
-The final-cut test needs `tests/final-cut/sample-check.json`, which isn't in the repo: `.gitignore` leaves out `tests/final-cut/*.json`. The script editor's sample script is in `tests/sample-workspace/scripts/`.
+`python -m tests` runs every `tests/<area>/test_*.py` file in its own process and prints pass or fail per file and a total (`python -m tests narration` runs only the files whose path contains "narration"). The recall test and the final cut on synthetic takes are run by hand.
+
+`make_samples.py` writes the synthetic takes to `tests/final_cut/out/` and the take check to `tests/final_cut/sample-check.json` (both left out of git), so the final-cut test runs from a fresh clone. The script editor's sample workspace is `tests/sample_workspace/`.

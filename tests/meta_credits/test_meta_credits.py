@@ -22,12 +22,12 @@ sys.path.insert(0, REPO)
 
 from PIL import Image  # noqa: E402
 
-import app  # noqa: E402
-import cut_video  # noqa: E402
-import draft_storyline  # noqa: E402
-import make_assets  # noqa: E402
-import narrate  # noqa: E402
-import usage  # noqa: E402
+from proof_and_demo import app  # noqa: E402
+from proof_and_demo import cut_video  # noqa: E402
+from proof_and_demo import draft_storyline  # noqa: E402
+from proof_and_demo import make_assets  # noqa: E402
+from proof_and_demo import narrate  # noqa: E402
+from proof_and_demo import usage  # noqa: E402
 
 USAGE_PATH = os.path.join(WORKSPACE, "usage.jsonl")
 

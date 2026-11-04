@@ -10,8 +10,8 @@ from datetime import datetime
 
 import requests
 
-from env import load_env_file
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.usage import log_call
 
 MODEL = "muse-voice-transcribe-1.0"
 URL = "https://api.meta.ai/v1/asr/transcribe"
@@ -22,7 +22,7 @@ MAX_SECONDS = 600
 PRICE_PER_HOUR = 0.18
 TIMEOUT_SECONDS = 180
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, above this package
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "voice-notes"))
 
 

@@ -14,9 +14,9 @@ os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, HERE)
-import check_takes  # noqa: E402
+from proof_and_demo import check_takes  # noqa: E402
 import make_synthetic_take  # noqa: E402
-from redact import redact_image  # noqa: E402
+from proof_and_demo.redact import redact_image  # noqa: E402
 
 CHECKLIST = os.path.join(HERE, "synthetic-checklist.json")
 with open(CHECKLIST, encoding="utf-8") as f:

@@ -1,6 +1,6 @@
 # Offline test for cut_video.py --reuse-redaction: which stable stretches may take their boxes from an earlier
 # leak report. No video, no OCR: a small made-up report and a made-up take file.
-# Run: python tests/final-cut/test_reuse_redaction.py
+# Run: python tests/final_cut/test_reuse_redaction.py
 import contextlib
 import copy
 import io
@@ -11,7 +11,7 @@ import tempfile
 
 REPO_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path.insert(0, REPO_DIR)
-import cut_video  # noqa: E402
+from proof_and_demo import cut_video  # noqa: E402
 
 failures = []
 

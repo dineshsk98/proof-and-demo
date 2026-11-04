@@ -1,6 +1,6 @@
 # Offline tests for narrate.py --script: requests.post is replaced by a fake, so nothing is sent.
 # Needs ffmpeg and ffprobe on PATH (the fake ElevenLabs reply is a real MP3 made with ffmpeg).
-# Run: python tests/narration-script/test_narrate_script.py
+# Run: python tests/narration_script/test_narrate_script.py
 import contextlib
 import io
 import json
@@ -14,7 +14,7 @@ os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py 
 
 REPO_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path.insert(0, REPO_DIR)
-import narrate  # noqa: E402
+from proof_and_demo import narrate  # noqa: E402
 
 FAKE_KEY = "fake-key-for-tests"
 FAKE_VOICE = "fake-voice-id"

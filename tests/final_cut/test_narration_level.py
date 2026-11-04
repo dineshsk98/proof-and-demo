@@ -2,7 +2,7 @@
 # (about 30 dB apart, with sharp peaks like real speech) are mixed into a short video by join_parts, the same way
 # a render does. In the video each clip must come out at the same loudness, and nothing may clip.
 # Needs ffmpeg on PATH. Nothing is sent anywhere.
-# Run: python tests/final-cut/test_narration_level.py
+# Run: python tests/final_cut/test_narration_level.py
 import os
 import subprocess
 import sys
@@ -10,7 +10,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
-import cut_video  # noqa: E402
+from proof_and_demo import cut_video  # noqa: E402
 
 TOTAL_S = 7.0
 CLIP_S = 1.8

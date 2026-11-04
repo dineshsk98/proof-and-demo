@@ -1,5 +1,5 @@
 # Offline test for script_narration.py: the OpenAI client is replaced by a fake, so nothing is sent to Meta.
-# Run: python tests/narration-script/test_script_narration.py
+# Run: python tests/narration_script/test_script_narration.py
 import contextlib
 import io
 import json
@@ -12,7 +12,7 @@ os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py 
 
 REPO_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path.insert(0, REPO_DIR)
-import script_narration  # noqa: E402
+from proof_and_demo import script_narration  # noqa: E402
 
 SECRET = "sk-test-PLANTED-0000-abcdefgh"  # long enough for redact.py's sk- pattern
 SENT = []  # (kwargs) of every fake call

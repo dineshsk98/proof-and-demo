@@ -77,7 +77,7 @@ ELEVENLABS_VOICE_ID=...
 Check the key with one small Muse Spark call:
 
 ```powershell
-python smoke_test.py
+python -m proof_and_demo.smoke_test
 ```
 
 ## Use
@@ -85,7 +85,7 @@ python smoke_test.py
 Start the app and open http://127.0.0.1:8000:
 
 ```powershell
-python app.py
+python -m proof_and_demo.app
 ```
 
 The app and the scripts read and write a `workspace/` folder next to the repo folder. Put your idea in `workspace/inputs/idea.md`, and the hackathon's rules and judging criteria in `workspace/inputs/judging.md`. Put recordings in `workspace/takes/`.
@@ -99,20 +99,20 @@ The pages, in the order you'd use them:
 
 While a job runs, its button says "Running…" and its status line shows a timer and the lines the script prints. Every Meta or ElevenLabs job is a live, paid call.
 
-Each step also runs from the command line, and a few run only there: the claim check, chapter and before/after cards, the music bed, and the narration check. Run the scripts from the repo folder, because they read `.env` from the current folder. The usual order:
+Each step also runs from the command line, and a few run only there: the claim check, chapter and before/after cards, the music bed, and the narration check. Run them from the repo folder (the one that holds `proof_and_demo/`), so Python finds the package. `.env` is always read from the repo folder. The usual order:
 
 ```powershell
-python draft_storyline.py ..\workspace\inputs\idea.md ..\workspace\inputs\judging.md --claim-check
-python voice.py <voice-note.m4a>
-python stage1_update.py <storyline.json> --variant 1
-python draft_storyline.py --revise <storyline.json> --variant 1 --brief <brief.md> --claim-check
-python check_takes.py <checklist.json> <take.mp4>
-python make_assets.py "<title>" "<subtitle>"
-python cut_video.py <take-check.json> --plan --storyline <storyline.json> --title-card ..\workspace\assets\title-card.png
-python script_narration.py <script.json>
-python narrate.py --script <script.json> --yes
-python check_narration.py <script.json>
-python cut_video.py --script <script.json> --music <bed.mp3>
+python -m proof_and_demo.draft_storyline ..\workspace\inputs\idea.md ..\workspace\inputs\judging.md --claim-check
+python -m proof_and_demo.voice <voice-note.m4a>
+python -m proof_and_demo.stage1_update <storyline.json> --variant 1
+python -m proof_and_demo.draft_storyline --revise <storyline.json> --variant 1 --brief <brief.md> --claim-check
+python -m proof_and_demo.check_takes <checklist.json> <take.mp4>
+python -m proof_and_demo.make_assets "<title>" "<subtitle>"
+python -m proof_and_demo.cut_video <take-check.json> --plan --storyline <storyline.json> --title-card ..\workspace\assets\title-card.png
+python -m proof_and_demo.script_narration <script.json>
+python -m proof_and_demo.narrate --script <script.json> --yes
+python -m proof_and_demo.check_narration <script.json>
+python -m proof_and_demo.cut_video --script <script.json> --music <bed.mp3>
 ```
 
 Each step writes a new file and never overwrites the old one. Every option, output file, cost and offline test is in [REFERENCE.md](REFERENCE.md).

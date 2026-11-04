@@ -1,6 +1,6 @@
 # Offline tests for stage1_update.py: a fake client, so nothing is sent to Meta.
 # They use the real redact.py when it exists, and a fake redact module otherwise.
-# Run: python test_stage1_update.py
+# Run: python tests/stage1/test_stage1_update.py
 import contextlib
 import copy
 import glob
@@ -11,6 +11,9 @@ import subprocess
 import sys
 import tempfile
 import types
+
+REPO_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+sys.path.insert(0, REPO_DIR)
 
 os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py logs the fake calls here, not in the real workspace
 
@@ -28,12 +31,12 @@ def fake_redact_text(text):
     return text, findings
 
 
-if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "redact.py")):
+if os.path.exists(os.path.join(REPO_DIR, "proof_and_demo", "redact.py")):
     print("Using the real redact.py")
 else:
     print("Using a fake redact module (redact.py is missing)")
     sys.modules["redact"] = types.SimpleNamespace(redact_text=fake_redact_text)
-import stage1_update  # noqa: E402  (must come after the fake redact module)
+from proof_and_demo import stage1_update  # noqa: E402  (must come after the fake redact module)
 
 REPLY = None  # the fake model's reply text for the next call
 CALLS = []  # kwargs of every fake call, plus what was printed before it
@@ -238,11 +241,11 @@ def test_stops_before_call():
 
 def test_missing_redact_module():
     # Runs the real script in a fresh Python, where no redact.py exists on this branch.
-    repo_dir = os.path.dirname(os.path.abspath(__file__))
-    if os.path.exists(os.path.join(repo_dir, "redact.py")):
+    repo_dir = REPO_DIR
+    if os.path.exists(os.path.join(repo_dir, "proof_and_demo", "redact.py")):
         print("skip  no redact.py: redact.py exists (local-redaction is merged)")
         return
-    result = subprocess.run([sys.executable, "stage1_update.py", "x.json"], cwd=repo_dir, capture_output=True, text=True)
+    result = subprocess.run([sys.executable, "-m", "proof_and_demo.stage1_update", "x.json"], cwd=repo_dir, capture_output=True, text=True)
     assert result.returncode != 0
     assert result.stderr.strip() == "redaction module missing: merge local-redaction first", result.stderr
     print(f"ok  no redact.py: {result.stderr.strip()}")

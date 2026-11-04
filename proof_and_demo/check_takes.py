@@ -12,9 +12,9 @@ import numpy as np
 from openai import OpenAI
 from PIL import Image
 
-from env import load_env_file
-from redact import redact_image
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.redact import redact_image
+from proof_and_demo.usage import log_call
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 THIRD_MODEL = "muse-spark-1.1"  # an older Spark for the independent third vote; standard tier, never "-contributor"
@@ -40,8 +40,9 @@ MAX_FRAMES = 10  # frames sent per take; each takes ~17 s to redact on CPU
 VOTES = [(MODEL, "forward"), (MODEL, "reverse"), (THIRD_MODEL, "forward")]
 SEND_WIDTH = 1280  # frames are redacted at full size, then shrunk to this width to send
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "take-check.md")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(PACKAGE_DIR)
+PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "take-check.md")
 WORKSPACE_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace"))
 DEFAULT_OUT_DIR = os.path.join(WORKSPACE_DIR, "takes", "checks")
 

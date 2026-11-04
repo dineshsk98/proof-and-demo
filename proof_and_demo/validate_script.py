@@ -1,7 +1,7 @@
 import re
 import subprocess
 
-from redact import redact_text
+from proof_and_demo.redact import redact_text
 
 # Local and free: nothing here calls the cloud. The Script page's Validate button runs check_script().
 FILL_MIN = 0.7  # a line that fills less of its time than this leaves silence

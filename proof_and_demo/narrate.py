@@ -8,9 +8,9 @@ from datetime import datetime
 
 import requests
 
-from env import load_env_file
-from redact import redact_text
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.redact import redact_text
+from proof_and_demo.usage import log_call
 
 # Narration in the builder's cloned voice. One ElevenLabs text-to-speech call per line: per storyline step, or
 # (with --script) per segment of a script from script_narration.py, stitched so the lines sound like one read.
@@ -41,7 +41,7 @@ KEEP_BEFORE_S, KEEP_AFTER_S = 0.05, 0.1
 STAND_IN_HZ = 600  # a steady tone check_cut.py can find under music
 STAND_IN_PULSE_HZ = 4  # pulsing about as fast as syllables
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, above this package
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "assets", "narration"))
 
 
@@ -113,7 +113,7 @@ def narrate_script(args):
     words_per_second = script.get("words_per_second", 2.5)
     lines = [s for s in script["segments"] if (s.get("narration") or "").strip()]
     if not lines:
-        sys.exit(f"No segment in {args.script} has narration. Run script_narration.py on it first.")
+        sys.exit(f"No segment in {args.script} has narration. Run python -m proof_and_demo.script_narration on it first.")
     texts = {}
     for s in lines:
         clean, findings = redact_text(s["narration"])

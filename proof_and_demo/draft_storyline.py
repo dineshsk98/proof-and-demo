@@ -10,10 +10,10 @@ from datetime import datetime
 
 from openai import OpenAI
 
-from env import load_env_file
-from redact import redact_text
-from script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
-from usage import log_call
+from proof_and_demo.env import load_env_file
+from proof_and_demo.redact import redact_text
+from proof_and_demo.script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
+from proof_and_demo.usage import log_call
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
@@ -29,13 +29,14 @@ MIN_WORDS_PER_SECOND = 2.0  # --revise only: narration must also fill most of th
 MAX_STEP_OVERLAP = 0.4
 STATUS = "not built yet"
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPT_PATH = os.path.join(REPO_DIR, "prompts", "storyline.md")
-CHECKLIST_PATH = os.path.join(REPO_DIR, "prompts", "review-checklist.md")
-COMBINE_PATH = os.path.join(REPO_DIR, "prompts", "combine.md")
-CLAIM_CHECK_PATH = os.path.join(REPO_DIR, "prompts", "claim-check.md")
-REVISE_PATH = os.path.join(REPO_DIR, "prompts", "revise.md")
-DEFAULT_STRUCTURES_PATH = os.path.join(REPO_DIR, "prompts", "structures.md")
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.dirname(PACKAGE_DIR)
+PROMPT_PATH = os.path.join(PACKAGE_DIR, "prompts", "storyline.md")
+CHECKLIST_PATH = os.path.join(PACKAGE_DIR, "prompts", "review-checklist.md")
+COMBINE_PATH = os.path.join(PACKAGE_DIR, "prompts", "combine.md")
+CLAIM_CHECK_PATH = os.path.join(PACKAGE_DIR, "prompts", "claim-check.md")
+REVISE_PATH = os.path.join(PACKAGE_DIR, "prompts", "revise.md")
+DEFAULT_STRUCTURES_PATH = os.path.join(PACKAGE_DIR, "prompts", "structures.md")
 WORKSPACE_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace"))
 DEFAULT_OUT_DIR = os.path.join(WORKSPACE_DIR, "storylines")
 DEFAULT_RULES_PATH = os.path.join(WORKSPACE_DIR, "inputs", "judging.md")
@@ -476,7 +477,7 @@ def revise(args, client):
     checklist_path = args.checklist or find_checklist(args.revise, args.variant, DEFAULT_CHECKLIST_DIR)
     if not checklist_path:
         sys.exit(f"No checklist in {DEFAULT_CHECKLIST_DIR} is for variant {args.variant} of {args.revise}. "
-                 "Run stage1_update.py first, or pass --checklist <JSON>.")
+                 "Run python -m proof_and_demo.stage1_update first, or pass --checklist <JSON>.")
     checklist = json.loads(read_text(checklist_path))
     source = checklist.get("source") or {}
     if os.path.basename(str(source.get("storyline"))) != os.path.basename(args.revise) or source.get("variant") != args.variant:
