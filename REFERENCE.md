@@ -254,7 +254,7 @@ It needs ffmpeg on PATH.
 
 ## app.py (the web app)
 
-`python -m proof_and_demo.app` serves the web app at http://127.0.0.1:8000, on this machine only. It is plain static HTML and JS (`proof_and_demo/static/`) over FastAPI JSON endpoints.
+`python -m proof_and_demo.app` serves the web app at http://127.0.0.1:8000, on this machine only. It answers only its own pages: a request whose Host isn't `127.0.0.1:8000` or `localhost:8000`, or whose Origin isn't `http://127.0.0.1:8000` or `http://localhost:8000`, gets a 403, so another website open in the same browser can't start a job or read workspace files. It is plain static HTML and JS (`proof_and_demo/static/`) over FastAPI JSON endpoints.
 
 **The active storyline:**
 - The Storyline page has a picker of every storyline file (`storylines-*`, `hybrid-*`, `revised-*`, `edited-*` and `storyline-*` in `workspace/storylines/`), newest first, and a button per variant.

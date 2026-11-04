@@ -72,6 +72,22 @@ EMPTY_TRANSCRIPT_MESSAGE = "returned no text"
 
 app = FastAPI()
 
+# The app listens on 127.0.0.1 only, but any website open in the same browser can still send it a simple POST
+# (and start a paid job), or reach it under another host name (DNS rebinding) and read /api/file. So every request,
+# GETs too, must name the app's own address as its Host, and one that says where it came from (Origin) must come
+# from the app's own pages. Anything else gets a 403.
+PORT = 8000
+ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+ALLOWED_ORIGINS = {f"http://{host}" for host in ALLOWED_HOSTS}
+
+
+@app.middleware("http")
+async def own_pages_only(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if request.headers.get("host") not in ALLOWED_HOSTS or (origin is not None and origin not in ALLOWED_ORIGINS):
+        return JSONResponse({"error": f"Only the app's own pages at http://127.0.0.1:{PORT} can use it."}, status_code=403)
+    return await call_next(request)
+
 # One runner for every button: each runs a script in its own process, in a thread,
 # while the page polls /api/jobs. One slot per kind, so a draft and a voice note can run
 # together, but two drafts can't. The slots live here because a job takes minutes.
@@ -877,4 +893,4 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 if __name__ == "__main__":
     # 127.0.0.1 only: nothing else on the network can reach the app.
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=PORT)
