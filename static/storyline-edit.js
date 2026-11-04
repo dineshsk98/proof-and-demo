@@ -6,7 +6,8 @@ const WORDS_PER_SECOND = 2.5; // the drafter's speaking rate (draft_storyline.py
 const MAX_STORY_SECONDS = 180;
 
 // While on, the page shows storyEdit.draft (a copy of the whole storyline) with its steps as inputs.
-const storyEdit = { on: false, draft: null, message: "", brief: "" };
+// pendingSwitch is a new storyline file (saved, drafted or revised) the app has not switched to: the page asks first.
+const storyEdit = { on: false, draft: null, message: "", brief: "", checklist: "", pendingSwitch: null };
 
 function storyDirty() {
   return storyEdit.on && JSON.stringify(storyEdit.draft) !== JSON.stringify(storyline.data);
@@ -34,8 +35,80 @@ async function saveStoryEdit() {
     renderStoryline();
     return;
   }
+  storyEdit.pendingSwitch = { file: reply.file, how: "saved" };
   stopStoryEdit(`Saved as ${reply.file}. The storyline you started from is untouched.`);
-  await loadData(); // the new file is the newest, so it is the one shown now
+  await loadData(); // the file in use stays the same: the page asks before switching
+}
+
+// ---------- Choosing which storyline file the app works from ----------
+
+// Makes a file and variant the active ones (the server keeps them in workspace/app-state.json), then redraws every page.
+async function chooseStoryline(file, variant) {
+  const response = await fetch(`/api/active-storyline?file=${encodeURIComponent(file)}&variant=${variant}`, { method: "POST" });
+  if (!response.ok) storyEdit.message = (await response.json()).error;
+}
+
+// One line per file, newest first: its name, kind, time and how many variants it has.
+function storylinePicker() {
+  const select = el("select");
+  select.id = "storyline-picker";
+  for (const entry of storylines) {
+    const option = el("option", null, `${entry.file.replace(/\.json$/, "")} · ${entry.kind} · ${entry.variants} variant${entry.variants === 1 ? "" : "s"} · ${entry.modified}`);
+    option.value = entry.file;
+    select.append(option);
+  }
+  select.value = storyline.file;
+  select.addEventListener("change", async () => {
+    if (storyEdit.on) {
+      storyEdit.message = "Save or cancel your edits before switching to another storyline file.";
+      renderStoryline();
+      return;
+    }
+    await chooseStoryline(select.value, 1);
+    await loadData();
+  });
+  const row = labelled("Storyline file", select);
+  row.classList.add("storyline-picker");
+  return row;
+}
+
+// Is there a new file to ask about? (Not once it is the one in use.)
+function switchPending() {
+  return !!storyEdit.pendingSwitch && !!storyline && storyEdit.pendingSwitch.file !== storyline.file;
+}
+
+// "Use the new file now?" after a save, a draft or a revision made a new file. Nothing switches until the answer is yes.
+function switchPrompt() {
+  const pending = storyEdit.pendingSwitch;
+  const card = el("div", "card switch-prompt");
+  const what = { saved: "Your edit was saved as", drafted: "A new storyline was drafted:", revised: "The revision was written to" }[pending.how];
+  card.append(el("p", null, `${what} ${pending.file}. Use the new file now? Everything (the board, Update progress, Plan cut, captions, Revise) works from the file in use, which is ${storyline.file} until you switch.`));
+  const buttons = el("div", "actions");
+  buttons.append(
+    makeButton("switch-use", "Use the new file now", null, async () => {
+      const entry = storylines.find((s) => s.file === pending.file);
+      storyEdit.pendingSwitch = null;
+      await chooseStoryline(pending.file, Math.min(variantIndex + 1, entry ? entry.variants : 1));
+      await loadData();
+    }),
+    makeButton("switch-keep", `Keep working on ${storyline.file}`, "secondary", () => {
+      storyEdit.pendingSwitch = null;
+      showActiveLine();
+      renderStoryline();
+    }),
+  );
+  card.append(buttons);
+  return card;
+}
+
+// A draft or revision finished: if it wrote a file other than the one in use, ask. Called from pollJobs.
+function afterStorylineJob(kind) {
+  const job = jobs[kind];
+  if ((kind !== "draft" && kind !== "revise") || job.state !== "done" || !job.wrote) return;
+  if (!storylines.some((s) => s.file === job.wrote) || (storyline && job.wrote === storyline.file)) return;
+  storyEdit.pendingSwitch = { file: job.wrote, how: kind === "draft" ? "drafted" : "revised" };
+  showActiveLine();
+  renderStoryline();
 }
 
 // The buttons above the steps: Edit steps, or Save and Cancel while editing.
@@ -117,16 +190,36 @@ function revisePanel() {
   });
   brief.id = "revise-brief";
   brief.placeholder = "What should change? e.g. “open on the failed take, cut the Meta step to 20 s”";
+  // Revise needs a checklist. The one made for this storyline and variant if there is one; a storyline you just saved has none yet,
+  // so the newest is chosen, and any other can be picked.
+  const names = ((files && files.checklists) || []).map((c) => c.name);
+  const matching = checklist ? checklist.file : "";
+  if (!names.includes(storyEdit.checklist) || (matching && storyEdit.checklist !== matching && !storyEdit.picked)) storyEdit.checklist = matching || names[0] || "";
+  const select = el("select");
+  select.id = "revise-checklist";
+  for (const name of names) {
+    const option = el("option", null, name);
+    option.value = name;
+    select.append(option);
+  }
+  select.value = storyEdit.checklist;
+  select.addEventListener("change", () => {
+    storyEdit.checklist = select.value;
+    storyEdit.picked = true;
+  });
+  card.append(labelled("Checklist", select));
   const buttons = el("div", "actions");
   buttons.append(makeButton("revise-button", "Revise this variant", null, () => {
-    const body = { file: storyline.file, variant: variantIndex + 1, brief: storyEdit.brief, checklist: checklist ? checklist.file : "" };
+    const body = { file: storyline.file, variant: variantIndex + 1, brief: storyEdit.brief, checklist: storyEdit.checklist };
     postJob("revise", "/api/revise", JSON.stringify(body));
   }));
   card.append(
     brief,
     buttons,
     withId(el("p", "job-status"), "revise-status"),
-    el("p", "meta", "Your brief and the variant (with the matching checklist, if there is one) go to one Muse Spark call, redacted locally first. The result is a new storyline file; this one is kept."),
+    el("p", "meta", matching
+      ? "Your brief, the variant and its checklist go to one Muse Spark call, redacted locally first. The result is a new storyline file; this one is kept."
+      : "No checklist was made for this storyline file (Update progress makes one), so the newest is picked. Its steps may not match yet. Your brief, the variant and the checklist go to one Muse Spark call, redacted locally first."),
   );
   return card;
 }

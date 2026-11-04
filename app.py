@@ -47,13 +47,16 @@ MUSIC_DIR = os.path.join(ASSETS_DIR, "music")
 SCRIPTS_DIR = os.path.join(WORKSPACE_DIR, "scripts")
 IMPROVEMENTS_DIR = os.path.join(SCRIPTS_DIR, "improvements")
 BRIEFS_DIR = os.path.join(WORKSPACE_DIR, "inputs", "briefs")
+APP_STATE_PATH = os.path.join(WORKSPACE_DIR, "app-state.json")  # which storyline file and variant the app works from
 IDEA_PATH = os.path.join(WORKSPACE_DIR, "inputs", "idea.md")
 JUDGING_PATH = os.path.join(WORKSPACE_DIR, "inputs", "judging.md")
 
-STORYLINE_PATTERNS = ["storyline-*.json", "storylines-*.json", "hybrid-*.json", "revised-*.json"]
+STORYLINE_PATTERNS = ["storyline-*.json", "storylines-*.json", "hybrid-*.json", "revised-*.json", "edited-*.json"]
+STORYLINE_KINDS = {"hybrid-": "hybrid", "revised-": "revised", "edited-": "edited"}  # by file name; anything else is a draft
 AUDIO_EXTENSIONS = [".m4a", ".mp3", ".wav", ".webm", ".ogg", ".mp4", ".aac", ".flac"]
 TAKE_EXTENSIONS = [".mp4", ".mov", ".mkv", ".webm"]
 MUSIC_EXTENSIONS = [".mp3", ".wav"]
+FALLBACK_DOLLARS_PER_1000_CHARACTERS = 0.08  # used only when narrate.py's own estimate can't be read; a real run cost about $0.09 for 1173 characters
 SEGMENT_KINDS = ["preview", "title", "footage", "wait", "proof", "chapter"]  # the script contract's kinds
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # voice.py rejects what is too long or too big once converted
 # Each limit is a little above what the script itself can take. A cut spends minutes on local redaction.
@@ -105,6 +108,19 @@ def inside(folder, name, extensions=None):
     return path
 
 
+def newest_reusable_leak_report():
+    # The newest leak report in workspace/final that lists its take_files, which is what a render needs to reuse its boxes
+    # (cut_video.py ignores one that doesn't match, so a wrong pick only costs the time). None if there isn't one.
+    for name in names_newest_first(FINAL_DIR, "*.leak-report.json"):
+        try:
+            with open(os.path.join(FINAL_DIR, name), encoding="utf-8") as f:
+                if "take_files" in json.load(f):
+                    return os.path.join(FINAL_DIR, name)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
 def narration_problem():
     # None when narrate.py can run. Only whether the two keys exist is checked, never their values.
     load_env_file()
@@ -119,9 +135,96 @@ def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
+def list_storylines():
+    # Every storyline file with its variants, newest first: [{file, modified, kind, variants}].
+    # Skips files that aren't JSON with a variants list (one still being written, say).
+    paths = set()
+    for pattern in STORYLINE_PATTERNS:
+        paths.update(glob.glob(os.path.join(STORYLINE_DIR, pattern)))
+    found = []
+    for path in sorted(paths, key=os.path.getmtime, reverse=True):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("variants"), list) and data["variants"]:
+            name = os.path.basename(path)
+            kind = next((kind for prefix, kind in STORYLINE_KINDS.items() if name.startswith(prefix)), "draft")
+            found.append({"file": name, "modified": f"{datetime.fromtimestamp(os.path.getmtime(path)):%Y-%m-%d %H:%M}", "kind": kind, "variants": len(data["variants"])})
+    return found
+
+
+def read_app_state():
+    # What was chosen last, or {} if nothing was or the file can't be read (it is then as if nothing was chosen).
+    try:
+        with open(APP_STATE_PATH, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def write_app_state(state):
+    # Written to a temporary file and moved into place, so a crash in the middle never leaves a half-written file.
+    temporary = APP_STATE_PATH + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+        f.write("\n")
+    os.replace(temporary, APP_STATE_PATH)
+
+
+def active_storyline():
+    # (the file's entry from list_storylines, the variant number from 1, whether it was chosen) or None when there are no storylines.
+    # What is chosen if that file still exists, otherwise the newest file.
+    files = list_storylines()
+    if not files:
+        return None
+    state = read_app_state()
+    chosen = next((f for f in files if f["file"] == state.get("storyline")), None)
+    entry = chosen or files[0]
+    variant = state.get("variant")
+    if not chosen or not isinstance(variant, int) or isinstance(variant, bool) or not 1 <= variant <= entry["variants"]:
+        variant = 1
+    return entry, variant, chosen is not None
+
+
+def pin_active(variant=None):
+    # Makes what is shown now an explicit choice, so a file about to be written (a draft, a revision, a saved edit)
+    # doesn't take its place just by being the newest. Nothing changes if a choice was already made.
+    found = active_storyline()
+    if found and not found[2]:
+        write_app_state({"storyline": found[0]["file"], "variant": variant or found[1]})
+
+
 @app.get("/api/storyline")
 def get_storyline():
-    return newest_json(STORYLINE_DIR, STORYLINE_PATTERNS, "variants")
+    # The active storyline: {file, modified, data, variant, chosen}. variant counts from 1; chosen says whether it was picked
+    # (false: nothing was, so it is the newest file).
+    found = active_storyline()
+    if not found:
+        return None
+    entry, variant, chosen = found
+    with open(os.path.join(STORYLINE_DIR, entry["file"]), encoding="utf-8") as f:
+        data = json.load(f)
+    return {"file": entry["file"], "modified": entry["modified"], "data": data, "variant": variant, "chosen": chosen}
+
+
+@app.get("/api/storylines")
+def get_storylines():
+    return list_storylines()
+
+
+@app.post("/api/active-storyline")
+def choose_storyline(file: str, variant: int = 1):
+    # Makes a file and variant the ones the whole app works from. It is kept in workspace/app-state.json.
+    entry = next((f for f in list_storylines() if f["file"] == os.path.basename(file)), None)
+    if not entry:
+        return JSONResponse({"error": f"No such storyline: {file}"}, status_code=400)
+    if not 1 <= variant <= entry["variants"]:
+        return JSONResponse({"error": f"{entry['file']} has {entry['variants']} variant(s), not {variant}."}, status_code=400)
+    write_app_state({"storyline": entry["file"], "variant": variant})
+    return get_storyline()
 
 
 @app.get("/api/checklist")
@@ -167,6 +270,7 @@ def get_files():
         "checks": names_newest_first(CHECKS_DIR, "*.json"),
         "narrations": names_newest_first(NARRATION_DIR, "*.json"),
         "music": [n for n in names_newest_first(MUSIC_DIR, "*") if os.path.splitext(n)[1].lower() in MUSIC_EXTENSIONS],
+        "leak_report": os.path.basename(newest_reusable_leak_report() or "") or None,
         "title_card": os.path.isfile(os.path.join(ASSETS_DIR, "title-card.png")),
         "thumbnail": os.path.isfile(os.path.join(ASSETS_DIR, "thumbnail.png")),
         "background": os.path.isfile(os.path.join(ASSETS_DIR, "background.png")),
@@ -224,6 +328,11 @@ def run_job(kind, job, command):
             with open(wrote[1], encoding="utf-8") as f:
                 fields["transcript"] = f.read().strip()[:5000]
         fields["empty"] = EMPTY_TRANSCRIPT_MESSAGE in stderr
+    if kind in ("draft", "revise"):
+        # The new storyline file, so the page can ask whether to switch to it.
+        wrote = re.search(r"Wrote (.+?\.json)", "\n".join(output))
+        if wrote:
+            fields["wrote"] = os.path.basename(wrote[1])
     if kind == "improve":
         # The rewrites the script proposed, for the page to show next to the old lines.
         wrote = re.search(r"Wrote (.+?\.json)", "\n".join(output))
@@ -264,6 +373,7 @@ def start_draft():
         if not os.path.exists(path):
             return JSONResponse({"error": f"Missing input file: {path}"}, status_code=400)
     command = [sys.executable, DRAFTER_PATH, idea_path, JUDGING_PATH, "--out-dir", STORYLINE_DIR]
+    pin_active()  # the new file must not replace the one in use just by being newest
     return start_job("draft", command, idea=os.path.basename(idea_path), judging=os.path.basename(JUDGING_PATH))
 
 
@@ -500,6 +610,35 @@ def take_size(path):
     return take_sizes[key]
 
 
+VOICE_CREDIT_JOB = "narration voice"  # narrate.py adds this credit on a paid ElevenLabs run, and never on a stand-in
+
+
+def audio_kind(segment):
+    # "none" (no audio), "voice" (a real ElevenLabs voice), "stand-in" (a placeholder tone) or "unknown" (audio with no credits at all,
+    # an older script). Real needs the "narration voice" credit. A clip in a stand-in-<time> folder is a stand-in whatever its credits
+    # say: narrate.py --stand-in doesn't remove a voice credit that the segment already had.
+    audio = segment.get("audio")
+    if not audio:
+        return "none"
+    folder = re.split(r"[\\/]", str(audio))[-2:-1]
+    credits = segment.get("credits")
+    if folder and folder[0].startswith("stand-in"):
+        return "stand-in"
+    if not credits:
+        return "unknown"
+    return "voice" if any(isinstance(c, dict) and c.get("job") == VOICE_CREDIT_JOB for c in credits) else "stand-in"
+
+
+def script_audio(segments):
+    # {kinds: {id: kind}, lines: segments with narration, voiced: how many of those have a real voice, label}.
+    # label says what the whole script has: voiced, stand-in, unknown, mixed or none.
+    kinds = {s["id"]: audio_kind(s) for s in segments}
+    lines = [s for s in segments if s.get("narration", "").strip()]
+    present = {kind for kind in kinds.values() if kind != "none"}
+    label = "none" if not present else "mixed" if len(present) > 1 else {"voice": "voiced"}.get(next(iter(present)), next(iter(present)))
+    return {"kinds": kinds, "lines": len(lines), "voiced": sum(1 for s in lines if kinds[s["id"]] == "voice"), "label": label}
+
+
 @app.get("/api/scripts")
 def get_scripts():
     scripts = []
@@ -512,7 +651,7 @@ def get_scripts():
         if script_problem(data):
             continue
         seconds = sum(max(0, (s["end_s"] - s["start_s"]) / s["speed"]) for s in data["segments"] if s["speed"] > 0)
-        scripts.append({"name": name, "segments": len(data["segments"]), "seconds": round(seconds, 1)})
+        scripts.append({"name": name, "segments": len(data["segments"]), "seconds": round(seconds, 1), "audio": script_audio(data["segments"])["label"]})
     return scripts
 
 
@@ -525,7 +664,8 @@ def get_script(file: str):
         data = json.load(f)
     # Each take's size in pixels, so the page can draw a focus box (given in take pixels) on a smaller thumbnail.
     takes = {s["take"] for s in data.get("segments", []) if isinstance(s, dict) and s.get("take")}
-    return {"file": os.path.basename(path), "data": data, "take_sizes": {take: take_size(take) for take in takes if take_size(take)}}
+    audio = script_audio(data["segments"]) if not script_problem(data) else {"kinds": {}, "lines": 0, "voiced": 0, "label": "none"}
+    return {"file": os.path.basename(path), "data": data, "take_sizes": {take: take_size(take) for take in takes if take_size(take)}, "audio": audio}
 
 
 @app.post("/api/script")
@@ -580,6 +720,9 @@ def start_plan(check: str, storyline: str = "", variant: int = 1):
     if not check_path:
         return JSONResponse({"error": f"No such take check: {check}"}, status_code=400)
     command = [sys.executable, CUT_PATH, check_path, "--plan", "--scripts-dir", SCRIPTS_DIR]
+    card_path = inside(ASSETS_DIR, "title-card.png")
+    if card_path:
+        command += ["--title-card", card_path]  # the plan includes the title card when there is one (the preview is opt-in, so it isn't passed)
     if storyline:
         storyline_path = inside(STORYLINE_DIR, storyline, [".json"])
         if not storyline_path:
@@ -617,25 +760,59 @@ def start_speak(file: str, stand_in: bool = False, confirm: bool = False):
     return start_job("speak", command, script=file, stand_in=stand_in)
 
 
-@app.post("/api/script/render")
-def start_render(file: str):
-    # Render: cut_video.py --script. It uses the "cut" slot, so the Final cut page shows the result too.
+@app.get("/api/script/estimate")
+def estimate_narration(file: str):
+    # What narrating the saved script with ElevenLabs would cost, as narrate.py itself works it out. Run without --yes,
+    # narrate.py redacts, prints "Narrating N lines: C characters (... about $X ...)" and stops with "Nothing was sent":
+    # no call is made. If that can't be read, a rough rate is used and the answer says so.
     script_path = inside(SCRIPTS_DIR, file, [".json"])
     if not script_path:
         return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
-    return start_job("cut", [sys.executable, CUT_PATH, "--script", script_path, "--out-dir", FINAL_DIR], check=file, narration="", title_card=False, music="", storyline="", render=True)
+    try:
+        run = subprocess.run([sys.executable, NARRATE_PATH, "--script", script_path], cwd=REPO_DIR, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=120, env={**os.environ, "PYTHONUTF8": "1"})
+        found = re.search(r"Narrating (\d+) lines: (\d+) characters.*?about \$([\d.]+)", run.stdout)
+    except (OSError, subprocess.TimeoutExpired):
+        found = None
+    if found:
+        return {"source": "narrate.py", "lines": int(found[1]), "characters": int(found[2]), "dollars": float(found[3])}
+    with open(script_path, encoding="utf-8") as f:
+        lines = [s["narration"] for s in json.load(f)["segments"] if s.get("narration", "").strip()]
+    characters = sum(len(line) for line in lines)
+    return {"source": "fallback", "lines": len(lines), "characters": characters, "dollars": round(characters / 1000 * FALLBACK_DOLLARS_PER_1000_CHARACTERS, 2)}
+
+
+@app.post("/api/script/render")
+def start_render(file: str, music: str = "", reuse: bool = False):
+    # Render: cut_video.py --script. It uses the "cut" slot, so the Final cut page shows the result too.
+    # music is a file in workspace/assets/music. reuse hands the newest leak report that has take_files to --reuse-redaction,
+    # which skips reading the stretches that match it exactly.
+    script_path = inside(SCRIPTS_DIR, file, [".json"])
+    if not script_path:
+        return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
+    command = [sys.executable, CUT_PATH, "--script", script_path, "--out-dir", FINAL_DIR]
+    if music:
+        music_path = inside(MUSIC_DIR, music, MUSIC_EXTENSIONS)
+        if not music_path:
+            return JSONResponse({"error": f"No such music file: {music}"}, status_code=400)
+        command += ["--music", music_path]
+    report = newest_reusable_leak_report() if reuse else None
+    if report:
+        command += ["--reuse-redaction", report]
+    return start_job("cut", command, check=file, narration="", title_card=False, music=music, storyline="", render=True, reuse=os.path.basename(report or ""))
 
 
 # ---------- Storyline editing and revising ----------
 
 @app.post("/api/storyline")
 async def save_storyline(request: Request):
-    # The edited storyline from the page becomes a new storylines-<time>.json, in the schema the drafter writes.
+    # The edited storyline from the page becomes a new edited-<time>.json, in the schema the drafter writes.
     data = await read_json(request)
     problem = storyline_problem(data)
     if problem:
         return JSONResponse({"error": problem}, status_code=400)
-    return {"file": write_new_json(STORYLINE_DIR, "storylines-", data)}
+    pin_active()
+    return {"file": write_new_json(STORYLINE_DIR, "edited-", data)}
 
 
 @app.post("/api/revise")
@@ -647,6 +824,7 @@ async def start_revise(request: Request):
     storyline_path = inside(STORYLINE_DIR, str(body.get("file", "")), [".json"])
     if not storyline_path:
         return JSONResponse({"error": f"No such storyline: {body.get('file')}"}, status_code=400)
+    pin_active(body.get("variant") if isinstance(body.get("variant"), int) else None)
     os.makedirs(BRIEFS_DIR, exist_ok=True)
     brief_path = os.path.join(BRIEFS_DIR, f"{datetime.now():%Y-%m-%d-%H%M%S}.md")
     with open(brief_path, "w", encoding="utf-8") as f:

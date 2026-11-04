@@ -4,7 +4,8 @@ let checklist = null; // same shape from /api/checklist for the variant shown, o
 let files = null; // what /api/files lists: checklists, takes, checks, narrations, assets
 let latestCheck = null; // same shape from /api/check, or null
 let latestCut = null; // same shape from /api/cut, or null
-let variantIndex = 0; // which storyline variant is picked
+let storylines = []; // every storyline file, from /api/storylines: [{file, modified, kind, variants}]
+let variantIndex = 0; // which variant of the active storyline file is picked (it comes from the server, which keeps the choice)
 
 // The order the readiness board shows its groups in.
 const STATUS_ORDER = ["missing", "partly works", "works", "flaky"];
@@ -61,6 +62,8 @@ function renderStoryline() {
   const variant = variants[variantIndex];
 
   root.append(pageHeading("Demo storyline", `${storyline.file} · written ${storyline.modified} · ${variants.length} variant${variants.length === 1 ? "" : "s"}`));
+  root.append(storylinePicker());
+  if (switchPending()) root.append(switchPrompt());
 
   const picker = el("div", "picker");
   variants.forEach((v, i) => {
@@ -68,7 +71,9 @@ function renderStoryline() {
     button.type = "button";
     button.append(el("strong", null, `${i + 1}. ${v.structure}`), el("span", null, `${totalSeconds(v)} s`));
     button.addEventListener("click", async () => {
+      if (!storyEdit.on) await chooseStoryline(storyline.file, i + 1); // kept on the server: the whole app works from this variant
       variantIndex = i;
+      showActiveLine();
       renderStoryline();
       await loadChecklist(); // the board shows the checklist made for the variant on screen
       renderReadiness();
@@ -418,6 +423,7 @@ async function pollJobs() {
     if (before[kind].state === "running" && latest[kind].state === "done") {
       await loadData();
       await afterScriptJob(kind);
+      afterStorylineJob(kind);
     }
   }
 }
@@ -474,8 +480,23 @@ async function loadChecklist() {
   checklist = await getJson("/api/checklist" + which);
 }
 
+// The small line under the top bar on every page: which storyline file and variant everything works from.
+function showActiveLine() {
+  const line = document.getElementById("active-line");
+  if (!storyline) {
+    line.textContent = "Storyline: none yet";
+    return;
+  }
+  line.textContent = `Storyline: ${storyline.file.replace(/\.json$/, "")} · variant ${variantIndex + 1}`
+    + (storyline.chosen ? "" : " (the newest file; nothing chosen yet)")
+    + (switchPending() ? ` · a new file is ready: ${storyEdit.pendingSwitch.file.replace(/\.json$/, "")} (see the Storyline page)` : "");
+}
+
 async function loadData() {
   storyline = await getJson("/api/storyline");
+  if (storyline) variantIndex = storyline.variant - 1; // the server keeps which variant was chosen
+  storylines = await getJson("/api/storylines");
+  showActiveLine();
   await loadChecklist();
   files = await getJson("/api/files");
   latestCheck = await getJson("/api/check");

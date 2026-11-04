@@ -7,7 +7,7 @@ Below are three inputs:
 
 For each line:
 - Keep it a plain, spoken sentence or two, in the builder's voice: first person, short words, no hype.
-- Use at most max_words words, and aim for 80% to 100% of max_words, so the line fills its time without leaving silence.
+- Use at most max_words words. Unless NOTE asks for a shorter line, aim for 80% to 100% of max_words, so the line fills its time without leaving silence. If NOTE asks for shorter, make it clearly shorter than the current line, even if that leaves some of its time unused.
 - End it as a full sentence.
 - Don't add any number, name, date, credit or feature that is not in the current line or in STORYLINE. If the note asks for something that isn't there, leave it out.
 - Don't describe what the screen looks like in more detail than STORYLINE does.

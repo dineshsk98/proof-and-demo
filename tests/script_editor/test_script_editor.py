@@ -224,15 +224,10 @@ def test_storyline_save():
     edited["variants"][0]["steps"][0]["title"] = "A new title"
     edited["variants"][0]["steps"][0]["judging_criteria"] = ["Technical Implementation"]
     name = call(app.save_storyline, edited)["file"]
-    assert name.startswith("storylines-") and name.endswith(".json")
+    assert name.startswith("edited-") and name.endswith(".json")
     saved = json.load(open(os.path.join(WORKSPACE, "storylines", name), encoding="utf-8"))
     assert saved == edited
-    assert app.get_storyline()["file"] in (name, "storyline-sample.json")  # the newest one shows first on the page
-    # K's --revise writes revised-<ts>.json: it counts as a storyline, and the newest one wins
-    revised = os.path.join(WORKSPACE, "storylines", "revised-2026-11-03-200000.json")
-    json.dump(edited, open(revised, "w", encoding="utf-8"))
-    os.utime(revised, (time.time() + 60, time.time() + 60))
-    assert app.get_storyline()["file"] == "revised-2026-11-03-200000.json"
+    assert app.get_storyline()["file"] == "storyline-sample.json"  # saving doesn't switch: the file in use stays
     for change, expected in [
         (lambda d: d["variants"][0]["steps"][0].update(target_seconds=0), "target_seconds"),
         (lambda d: d["variants"][0]["steps"][0].update(target_seconds=2.5), "target_seconds"),
@@ -245,6 +240,142 @@ def test_storyline_save():
         change(broken)
         response = call(app.save_storyline, broken)
         assert response.status_code == 400 and expected in json.loads(response.body)["error"], (expected, response.body)
+
+
+def test_audio_kinds():
+    voice = [{"model": "muse-spark-1.3", "job": "narration line"}, {"model": "eleven_multilingual_v2", "job": "narration voice"}]
+    line = [{"model": "muse-spark-1.3", "job": "narration line"}]
+    cases = [
+        ({"audio": None, "credits": voice}, "none"),
+        ({"credits": voice}, "none"),  # no audio key at all
+        ({"audio": "assets/narration/2026-11-04-120000/s01.wav", "credits": voice}, "voice"),
+        ({"audio": "C:\\w\\assets\\narration\\2026-11-04-120000\\s01.wav", "credits": voice}, "voice"),  # a Windows path
+        ({"audio": "assets/narration/2026-11-04-120000/s01.wav", "credits": line}, "stand-in"),  # credits, but no voice credit
+        ({"audio": "assets/narration/2026-11-04-120000/s01.wav", "credits": [{"model": "Dinesh", "job": "edited"}]}, "stand-in"),
+        ({"audio": "assets/narration/2026-11-04-120000/s01.wav"}, "unknown"),  # an older script: no credits
+        ({"audio": "assets/narration/2026-11-04-120000/s01.wav", "credits": []}, "unknown"),
+        ({"audio": "assets/narration/2026-11-04-120000/s01.wav", "credits": None}, "unknown"),
+        # a stand-in made over a segment that already had the voice credit is still a stand-in (narrate.py leaves the credit)
+        ({"audio": "assets/narration/stand-in-2026-11-04-120000/s01.wav", "credits": voice}, "stand-in"),
+        ({"audio": "C:\\w\\assets\\narration\\stand-in-2026-11-04-120000\\s01.wav", "credits": voice}, "stand-in"),
+        ({"audio": "assets/narration/stand-in-2026-11-04-120000/s01.wav"}, "stand-in"),
+    ]
+    for segment, expected in cases:
+        assert app.audio_kind(segment) == expected, (segment, app.audio_kind(segment), expected)
+
+    def seg(id, kind, narration="A line."):
+        audio = {"none": None, "voice": "n/2026/x.wav", "stand-in": "n/stand-in-2026/x.wav", "unknown": "n/2026/y.wav"}[kind]
+        return {"id": id, "narration": narration, "audio": audio, "credits": voice if kind == "voice" else None if kind == "unknown" else line}
+
+    for kinds, label in [(["voice", "voice"], "voiced"), (["stand-in", "stand-in"], "stand-in"), (["voice", "stand-in"], "mixed"),
+                         (["unknown", "unknown"], "unknown"), (["voice", "unknown"], "mixed"), (["none", "none"], "none"), (["voice", "none"], "voiced")]:
+        assert app.script_audio([seg(f"s{i}", k) for i, k in enumerate(kinds)])["label"] == label, (kinds, label)
+    summary = app.script_audio([seg("a", "voice"), seg("b", "stand-in"), seg("c", "voice", narration=""), seg("d", "unknown")])
+    assert (summary["lines"], summary["voiced"]) == (3, 1) and summary["kinds"]["b"] == "stand-in" and summary["kinds"]["d"] == "unknown"  # c has no narration line
+    assert app.script_audio([])["label"] == "none"
+
+    # through the endpoints: the sample's audio has credits without a voice credit, so it is a stand-in
+    listed = {item["name"]: item["audio"] for item in app.get_scripts()}
+    assert listed[SCRIPT_NAME] == "stand-in"
+    opened = app.get_script(SCRIPT_NAME)["audio"]
+    assert opened["label"] == "stand-in" and opened["kinds"]["s03"] == "stand-in" and opened["kinds"]["s01"] == "none" and opened["voiced"] == 0
+    voiced = with_segment(credits=voice, audio="n/2026/real.wav")
+    name = call(app.save_script, voiced)["file"]
+    assert app.get_script(name)["audio"]["kinds"]["s03"] == "voice" and app.get_script(name)["audio"]["voiced"] == 1
+    assert {item["name"]: item["audio"] for item in app.get_scripts()}[name] == "mixed"  # one real voice, one stand-in (s05)
+
+
+def reset_state():
+    if os.path.exists(app.APP_STATE_PATH):
+        os.remove(app.APP_STATE_PATH)
+
+
+def test_storyline_picker_and_active_state():
+    reset_state()
+    folder = os.path.join(WORKSPACE, "storylines")
+    for old in os.listdir(folder):
+        if old != "storyline-sample.json":
+            os.remove(os.path.join(folder, old))
+    now = time.time()
+
+    def add(name, variants, age):
+        data = json.loads(json.dumps(STORYLINE))
+        data["variants"] = data["variants"][:variants]
+        path = os.path.join(folder, name)
+        json.dump(data, open(path, "w", encoding="utf-8"))
+        os.utime(path, (now - age, now - age))
+
+    os.utime(os.path.join(folder, "storyline-sample.json"), (now - 500, now - 500))
+    add("storylines-2026-11-04-100000.json", 2, 400)
+    add("hybrid-2026-11-04-110000.json", 1, 300)
+    add("revised-2026-11-04-093554.json", 1, 200)
+    add("edited-2026-11-04-120000.json", 1, 100)
+    open(os.path.join(folder, "storylines-2026-11-04-130000.json"), "w").write('{"variants": [')  # still being written
+    open(os.path.join(folder, "revised-2026-11-04-130000-claims.md"), "w").write("# not json")
+    listed = app.get_storylines()
+    assert [(f["file"], f["kind"], f["variants"]) for f in listed] == [
+        ("edited-2026-11-04-120000.json", "edited", 1), ("revised-2026-11-04-093554.json", "revised", 1),
+        ("hybrid-2026-11-04-110000.json", "hybrid", 1), ("storylines-2026-11-04-100000.json", "draft", 2), ("storyline-sample.json", "draft", 2)]
+    assert listed[0]["modified"].count(":") == 1
+
+    # nothing chosen: the newest file, variant 1, and it says so
+    active = app.get_storyline()
+    assert (active["file"], active["variant"], active["chosen"]) == ("edited-2026-11-04-120000.json", 1, False) and not os.path.exists(app.APP_STATE_PATH)
+
+    # choosing a file and variant: kept in the state file, so it survives a restart (a fresh read of the file)
+    chosen = app.choose_storyline("storylines-2026-11-04-100000.json", 2)
+    assert (chosen["file"], chosen["variant"], chosen["chosen"]) == ("storylines-2026-11-04-100000.json", 2, True) and len(chosen["data"]["variants"]) == 2
+    assert json.load(open(app.APP_STATE_PATH, encoding="utf-8")) == {"storyline": "storylines-2026-11-04-100000.json", "variant": 2}
+    assert not os.path.exists(app.APP_STATE_PATH + ".tmp")  # written by moving a finished file into place
+    assert app.get_storyline()["variant"] == 2
+    # a newer file doesn't take its place
+    add("revised-2026-11-04-140000.json", 1, -10)
+    assert app.get_storyline()["file"] == "storylines-2026-11-04-100000.json"
+
+    # bad choices are refused and change nothing
+    for file, variant in [("nope.json", 1), ("storylines-2026-11-04-100000.json", 3), ("storylines-2026-11-04-100000.json", 0), ("../storylines-x.json", 1)]:
+        assert app.choose_storyline(file, variant).status_code == 400
+    assert app.get_storyline()["variant"] == 2
+    assert app.choose_storyline("../storylines-2026-11-04-100000.json", 1)["file"] == "storylines-2026-11-04-100000.json"  # only the name counts
+
+    # a state that can't be used falls back to the newest file: a deleted file, a variant out of range, a corrupt or odd state file
+    json.dump({"storyline": "gone.json", "variant": 1}, open(app.APP_STATE_PATH, "w"))
+    assert (app.get_storyline()["file"], app.get_storyline()["chosen"]) == ("revised-2026-11-04-140000.json", False)
+    json.dump({"storyline": "hybrid-2026-11-04-110000.json", "variant": 5}, open(app.APP_STATE_PATH, "w"))
+    assert (app.get_storyline()["file"], app.get_storyline()["variant"]) == ("hybrid-2026-11-04-110000.json", 1)
+    for broken in ("{not json", "[1, 2]", ""):
+        open(app.APP_STATE_PATH, "w").write(broken)
+        assert app.get_storyline()["file"] == "revised-2026-11-04-140000.json"
+
+    # whatever writes a new storyline file first pins the one in use, so the new file can't take over by being newest
+    reset_state()
+    started = capture_jobs()
+    before = app.get_storyline()["file"]
+    call(app.start_revise, {"file": before, "variant": 1, "brief": "x"})
+    assert json.load(open(app.APP_STATE_PATH, encoding="utf-8"))["storyline"] == before
+    add("revised-2026-11-04-150000.json", 1, -20)  # what the revision would write
+    assert app.get_storyline()["file"] == before
+    reset_state()
+    call(app.save_storyline, STORYLINE)
+    assert json.load(open(app.APP_STATE_PATH, encoding="utf-8"))["storyline"] == "revised-2026-11-04-150000.json"
+    # an existing choice is left as it is
+    app.choose_storyline("hybrid-2026-11-04-110000.json", 1)
+    call(app.save_storyline, STORYLINE)
+    assert app.get_storyline()["file"] == "hybrid-2026-11-04-110000.json"
+    reset_state()
+
+
+def test_job_runner_reports_the_new_storyline():
+    # what a draft or a revision printed: the page asks whether to switch to that file
+    path = os.path.join(TMP, "x", "revised-2026-11-04-160000.json").replace(chr(92), "/")
+    code = f"print('Revising variant 1'); print('Wrote {path}'); print('Wrote {path[:-5]}.md')"
+    for kind in ("revise", "draft"):
+        job = {"state": "running", "lines": []}
+        app.run_job(kind, job, [sys.executable, "-c", code])
+        assert job["wrote"] == "revised-2026-11-04-160000.json", job
+    job = {"state": "running", "lines": []}
+    app.run_job("check", job, [sys.executable, "-c", code])
+    assert "wrote" not in job
 
 
 def capture_jobs():
@@ -270,6 +401,13 @@ def test_pipeline_commands():
     kind, command, _ = started.pop()
     assert kind == "plan" and command[1:] == [app.CUT_PATH, check, "--plan", "--scripts-dir", app.SCRIPTS_DIR, "--storyline", os.path.join(WORKSPACE, "storylines", "storyline-sample.json"), "--variant", "2"]
     assert app.start_plan("nope.json").status_code == 400 and not started
+    # the title card goes into the plan when there is one; the preview is opt-in and never passed
+    os.makedirs(app.ASSETS_DIR, exist_ok=True)
+    open(os.path.join(app.ASSETS_DIR, "title-card.png"), "wb").write(b"x")
+    app.start_plan("sample-check.json")
+    command = started.pop()[1]
+    assert command[1:] == [app.CUT_PATH, check, "--plan", "--scripts-dir", app.SCRIPTS_DIR, "--title-card", os.path.join(app.ASSETS_DIR, "title-card.png")]
+    assert "--preview" not in command
 
     app.start_write(SCRIPT_NAME)
     kind, command, _ = started.pop()
@@ -291,6 +429,32 @@ def test_pipeline_commands():
     kind, command, details = started.pop()
     assert kind == "cut" and command[1:] == [app.CUT_PATH, "--script", saved, "--out-dir", app.FINAL_DIR]
     assert app.start_render("nope.json").status_code == 400 and not started
+    assert app.start_render(SCRIPT_NAME, music="../nope.mp3").status_code == 400 and not started
+
+    # music and the redaction reuse: only a leak report that lists take_files counts, and the newest one wins
+    os.makedirs(app.MUSIC_DIR, exist_ok=True)
+    open(os.path.join(app.MUSIC_DIR, "bed.mp3"), "wb").write(b"x")
+    os.makedirs(app.FINAL_DIR, exist_ok=True)
+    older = os.path.join(app.FINAL_DIR, "a.leak-report.json")
+    newer = os.path.join(app.FINAL_DIR, "b.leak-report.json")
+    without = os.path.join(app.FINAL_DIR, "c.leak-report.json")
+    json.dump({"take_files": ["t.mp4"]}, open(older, "w"))
+    json.dump({"take_files": ["t.mp4"]}, open(newer, "w"))
+    json.dump({"boxes_drawn": 0}, open(without, "w"))
+    now = time.time()
+    for path, age in [(older, 300), (newer, 200), (without, 100)]:
+        os.utime(path, (now - age, now - age))
+    assert app.get_files()["leak_report"] == "b.leak-report.json"
+    app.start_render(SCRIPT_NAME, music="bed.mp3", reuse=True)
+    command = started.pop()[1]
+    assert command[1:] == [app.CUT_PATH, "--script", saved, "--out-dir", app.FINAL_DIR, "--music", os.path.join(app.MUSIC_DIR, "bed.mp3"), "--reuse-redaction", newer]
+    app.start_render(SCRIPT_NAME, music="bed.mp3", reuse=False)
+    assert "--reuse-redaction" not in started.pop()[1]
+    os.remove(newer)
+    os.remove(older)
+    assert app.get_files()["leak_report"] is None
+    app.start_render(SCRIPT_NAME, reuse=True)  # nothing to reuse: the flag is left out
+    assert started.pop()[1] == [sys.executable, app.CUT_PATH, "--script", saved, "--out-dir", app.FINAL_DIR]
 
     response = call(app.start_improve, {"file": SCRIPT_NAME, "ids": ["s01", "s03"], "note": "shorter"})
     kind, command, details = started.pop()
@@ -299,6 +463,24 @@ def test_pipeline_commands():
     for body in [{"file": SCRIPT_NAME, "ids": [], "note": "x"}, {"file": SCRIPT_NAME, "ids": ["s01"], "note": "  "}, {"file": "nope.json", "ids": ["s01"], "note": "x"}]:
         assert call(app.start_improve, body).status_code == 400
     assert not started
+
+
+def test_narration_estimate():
+    # narrate.py's own estimate is read from what it prints without --yes. A stand-in for it prints the same line and stops.
+    fake = os.path.join(TMP, "fake_narrate.py")
+    open(fake, "w").write("import sys\nprint('Narrating 6 lines: 448 characters (about 448 ElevenLabs credits, about $0.07 at API prices)')\n"
+                          "sys.exit('Nothing was sent. Add --yes to make the calls.')\n")
+    real = app.NARRATE_PATH
+    app.NARRATE_PATH = fake
+    try:
+        assert app.estimate_narration(SCRIPT_NAME) == {"source": "narrate.py", "lines": 6, "characters": 448, "dollars": 0.07}
+        app.NARRATE_PATH = os.path.join(TMP, "missing.py")  # nothing readable: a rough rate over the saved lines, and it says so
+        fallback = app.estimate_narration(SCRIPT_NAME)
+        chars = sum(len(s["narration"]) for s in SCRIPT["segments"] if s["narration"].strip())
+        assert fallback["source"] == "fallback" and fallback["characters"] == chars and fallback["dollars"] == round(chars / 1000 * 0.08, 2)
+    finally:
+        app.NARRATE_PATH = real
+    assert app.estimate_narration("nope.json").status_code == 400
 
 
 def test_revise_and_cut_commands():
@@ -316,7 +498,7 @@ def test_revise_and_cut_commands():
 
     # The Final cut page passes the storyline on screen and a music file.
     check = os.path.join(WORKSPACE, "takes", "checks", "sample-check.json")
-    os.makedirs(app.MUSIC_DIR)
+    os.makedirs(app.MUSIC_DIR, exist_ok=True)
     open(os.path.join(app.MUSIC_DIR, "bed.mp3"), "wb").write(b"x")
     app.start_cut("sample-check.json", storyline="storyline-sample.json", variant=2, music="bed.mp3")
     kind, command, _ = started.pop()
@@ -441,7 +623,7 @@ def test_improve_script():
 
 if __name__ == "__main__":
     tests = [test_validate_the_sample, test_new_optional_fields, test_probe_size, test_line_fit, test_full_sentence, test_times_and_audio, test_claims, test_total_over_the_limit,
-             test_script_shape, test_save_never_overwrites, test_validate_endpoint, test_storyline_save, test_pipeline_commands,
+             test_script_shape, test_save_never_overwrites, test_validate_endpoint, test_storyline_save, test_audio_kinds, test_storyline_picker_and_active_state, test_job_runner_reports_the_new_storyline, test_pipeline_commands, test_narration_estimate,
              test_revise_and_cut_commands, test_job_runner_returns_the_improvement, test_running_job_reports_its_progress, test_files_are_served_from_the_workspace_only,
              test_improve_script]
     for test in tests:

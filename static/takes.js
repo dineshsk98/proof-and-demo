@@ -178,7 +178,8 @@ function verdictRow(step) {
   body.append(el("p", "meta", `${frameLabel} · kept stretch ${seconds(step.start_s)} to ${seconds(step.end_s)}`));
   body.append(el("p", "step-end", step.expected_end_state));
   for (const vote of step.votes) {
-    body.append(el("p", "vote", `${vote.order}: ${vote.verdict}${vote.frame ? " at " + vote.frame : ""}. ${vote.reason}`));
+    // vote.model names who voted (a check made before models were recorded has none)
+    body.append(el("p", "vote", `${vote.model ? vote.model + " " : ""}${vote.order}: ${vote.verdict}${vote.frame ? " at " + vote.frame : ""}. ${vote.reason}`));
   }
   row.append(body);
   return row;

@@ -3,8 +3,6 @@
 // storyline and variantIndex from there, fileUrl, baseName and labelled from takes.js, and clock, checkbox
 // and cutResult from cut.js.
 
-// ElevenLabs bills one credit per character on eleven_multilingual_v2. About $0.22 per 1,000 credits is the Creator plan's rate; yours may differ.
-const DOLLARS_PER_1000_CHARACTERS = 0.22;
 const MAX_VIDEO_SECONDS = 180;
 const FILL_MIN = 0.7; // a line that fills less of its time than this leaves silence (the same limit as validate_script.py)
 const ASR_MATCH_MIN = 0.9; // Voice Transcribe should hear at least this much of the line (the same limit as validate_script.py)
@@ -14,6 +12,10 @@ let scripts = []; // [{name, segments, seconds}] from /api/scripts, newest first
 const scriptState = {
   file: "", loaded: null, draft: null, validation: null, picked: new Set(), improvement: null,
   note: "", check: "", standIn: true, confirming: false, message: "",
+  music: null, reuse: true, // the render's music bed (null: the newest that isn't a stand-in) and whether to reuse the last redaction
+  estimate: null, // what narrate.py says narrating the saved script would cost, once asked
+  audio: { kinds: {}, lines: 0, voiced: 0, label: "none" }, // what kind of audio each saved segment has (from the server)
+  confirmingRender: false, // asking whether to render with stand-in audio
   takeSizes: {}, // take path -> [width, height], for drawing focus boxes
   handEdited: new Set(), // ids of segments you changed by typing, for the "Dinesh · edited" credit
 };
@@ -68,6 +70,8 @@ async function openScript(name) {
   scriptState.loaded = reply.data;
   scriptState.draft = clone(reply.data);
   scriptState.takeSizes = reply.take_sizes || {};
+  scriptState.audio = reply.audio;
+  scriptState.confirmingRender = false;
   scriptState.handEdited = new Set();
   scriptState.validation = null;
   scriptState.picked = new Set();
@@ -92,6 +96,8 @@ function draftAsSaved() {
       segment.audio = null;
       segment.audio_s = null;
       if (segment.asr) segment.asr = null;
+      // the "narration voice" credit was for that audio: left in, a stand-in made later would pass for the voice
+      if (segment.credits) segment.credits = segment.credits.filter((c) => c.job !== "narration voice");
     }
   }
   return copy;
@@ -173,7 +179,7 @@ function scriptBar() {
   const card = el("div", "card script-bar");
   const select = el("select");
   for (const script of scripts) {
-    const option = el("option", null, `${script.name} (${script.segments} segments, ${clock(script.seconds)})`);
+    const option = el("option", null, `${script.name} (${script.segments} segments, ${clock(script.seconds)}, audio: ${script.audio})`);
     option.value = script.name;
     select.append(option);
   }
@@ -190,6 +196,9 @@ function scriptBar() {
 
   const total = el("p", "script-total");
   total.id = "script-total";
+  const voice = el("p", "voice-line" + (scriptState.audio.voiced < scriptState.audio.lines ? " not-voiced" : ""));
+  voice.id = "script-voice";
+  voice.textContent = voiceLineText();
   const summary = el("p", "meta");
   summary.id = "script-summary";
   const note = el("p", "meta");
@@ -211,6 +220,7 @@ function scriptBar() {
   card.append(
     labelled("Script", select),
     total,
+    voice,
     buttons,
     summary,
     note,
@@ -366,6 +376,9 @@ function segmentCard(segment, index) {
     const handMade = scriptState.handEdited.has(segment.id) && before && contentOf(segment) !== contentOf(before);
     if (handMade && !shown.some((c) => c.model === "Dinesh" && c.job === "edited")) shown.push({ model: "Dinesh", job: "edited", pending: true });
     for (const credit of shown) credits.append(el("span", "badge" + (credit.pending ? " pending" : ""), `${credit.model} · ${credit.job}`));
+    const kind = segment.audio ? scriptState.audio.kinds[segment.id] : "none";
+    if (kind === "stand-in") credits.prepend(el("span", "badge standin", "Stand-in tone, not a voice"));
+    else if (kind === "unknown") credits.prepend(el("span", "badge standin-unknown", "Audio source unknown (no credits)"));
     issues.replaceChildren();
     const found = scriptState.validation ? scriptState.validation.segments[segment.id] || [] : [];
     for (const issue of found) issues.append(el("li", "issue " + issue.level, issue.text));
@@ -389,6 +402,7 @@ function segmentCard(segment, index) {
     change();
     if (scriptState.validation) delete scriptState.validation.segments[segment.id];
     scriptState.confirming = false;
+    scriptState.confirmingRender = false;
     refresh();
     updateScriptTop();
   }
@@ -512,9 +526,44 @@ function proposalsPanel() {
 
 // ---------- Pipeline: plan, write narration, narrate, render ----------
 
-function savedCharacters() {
-  const lines = scriptState.loaded.segments.filter((s) => s.narration.trim());
-  return { lines: lines.length, characters: lines.reduce((sum, s) => sum + s.narration.length, 0) };
+// Asks the server what narrating would cost (it runs narrate.py without --yes, which sends nothing), then shows the confirm box.
+async function askNarrationCost() {
+  scriptState.estimate = null;
+  scriptState.confirming = true;
+  renderScript();
+  scriptState.estimate = await getJson("/api/script/estimate?file=" + encodeURIComponent(scriptState.file));
+  renderScript();
+}
+
+function narrationCostText() {
+  const estimate = scriptState.estimate;
+  if (!estimate) return "Asking narrate.py what this would cost (nothing is sent)…";
+  if (estimate.error) return `Could not work out the cost: ${estimate.error}`;
+  const where = estimate.source === "narrate.py" ? "narrate.py's estimate" : "a rough estimate at $0.08 per 1,000 characters (narrate.py's own could not be read)";
+  return `This is a paid ElevenLabs call: ${estimate.characters} characters in ${estimate.lines} lines, about $${estimate.dollars.toFixed(2)} (${where}; your plan may differ). The text is redacted locally first. narrate.py voices every line again, not only the ones you changed.`;
+}
+
+// How many lines have a real voice: the line under the total.
+function voiceLineText() {
+  const { voiced, lines } = scriptState.audio;
+  if (lines === 0) return "No narration lines yet.";
+  return `Voice: ${voiced} of ${lines} narration line${lines === 1 ? "" : "s"} ${voiced === 1 ? "has" : "have"} a real voice.`;
+}
+
+// The lines the saved script would render with a stand-in tone, or audio of unknown source, instead of a real voice.
+function notVoiced() {
+  const segments = scriptState.loaded.segments.filter((s) => s.narration.trim() && s.audio);
+  const standIn = segments.filter((s) => scriptState.audio.kinds[s.id] === "stand-in").length;
+  const unknown = segments.filter((s) => scriptState.audio.kinds[s.id] === "unknown").length;
+  return { standIn, unknown };
+}
+
+function renderConfirmText() {
+  const { standIn, unknown } = notVoiced();
+  const parts = [];
+  if (standIn) parts.push(`${standIn} line${standIn === 1 ? " is a stand-in tone" : "s are a stand-in tone"}, not your voice`);
+  if (unknown) parts.push(`${unknown} line${unknown === 1 ? " has" : "s have"} audio of unknown source (no credits)`);
+  return `${parts.join(", and ")}. Render anyway?`;
 }
 
 function pipelinePanel() {
@@ -558,17 +607,14 @@ function pipelinePanel() {
     if (scriptState.standIn) {
       postJob("speak", `/api/script/speak?file=${encodeURIComponent(scriptState.file)}&stand_in=true`);
     } else {
-      scriptState.confirming = true;
-      renderScript();
+      askNarrationCost();
     }
   }));
   card.append(narrate);
   if (scriptState.confirming && scriptState.loaded) {
-    const { lines, characters } = savedCharacters();
-    const dollars = (characters / 1000) * DOLLARS_PER_1000_CHARACTERS;
     const confirm = el("div", "confirm");
     confirm.id = "narrate-confirm";
-    confirm.append(el("p", null, `This is a paid ElevenLabs call: up to ${characters} characters in ${lines} lines, about $${dollars.toFixed(2)}. The rate is a rough guess; your plan may differ. The text is redacted locally first.`));
+    confirm.append(el("p", null, narrationCostText()));
     const buttons = el("div", "actions");
     buttons.append(
       makeButton("script-narrate-confirm", "Confirm and narrate (paid)", null, () => {
@@ -587,13 +633,62 @@ function pipelinePanel() {
   card.append(scriptStatus("speak"));
   if (files && files.narration_problem) card.append(el("p", "meta", `ElevenLabs: ${files.narration_problem}`));
 
-  // 4. Render
+  // 4. Render: with a music bed (the newest that isn't a stand-in unless you pick another) and, if it can, the last render's redaction
+  const beds = (files && files.music) || [];
+  const newestReal = beds.find((name) => !name.startsWith("stand-in"));
+  if (scriptState.music === null) scriptState.music = newestReal || "";
+  const music = el("select");
+  music.id = "render-music";
+  const none = el("option", null, "No music");
+  none.value = "";
+  music.append(none);
+  for (const name of beds) {
+    const option = el("option", null, name);
+    option.value = name;
+    music.append(option);
+  }
+  music.value = beds.includes(scriptState.music) ? scriptState.music : "";
+  music.addEventListener("change", () => (scriptState.music = music.value));
+  card.append(labelled("Music bed", music));
+  const reusable = files && files.leak_report;
+  card.append(checkbox(reusable ? `Reuse the redaction from ${reusable} (faster; stretches that don't match are read again)` : "Reuse redaction (no earlier render to reuse)", scriptState.reuse && !!reusable, !reusable, (on) => (scriptState.reuse = on)));
   const render = el("div", "actions");
-  render.append(makeButton("script-render-button", "4. Render", null, () => postJob("cut", `/api/script/render?file=${encodeURIComponent(scriptState.file)}`)));
+  const startRender = () => {
+    const reuse = scriptState.reuse && !!reusable;
+    postJob("cut", `/api/script/render?file=${encodeURIComponent(scriptState.file)}&music=${encodeURIComponent(scriptState.music || "")}&reuse=${reuse}`);
+  };
+  render.append(makeButton("script-render-button", "4. Render", null, () => {
+    const { standIn, unknown } = notVoiced();
+    if (standIn + unknown > 0) {
+      scriptState.confirmingRender = true; // nothing starts until the answer is yes
+      renderScript();
+    } else {
+      startRender();
+    }
+  }));
   const progress = el("progress");
   progress.id = "script-render-progress";
   progress.max = 100;
   progress.hidden = true;
+  if (scriptState.confirmingRender && scriptState.loaded) {
+    const confirm = el("div", "confirm");
+    confirm.id = "render-confirm";
+    confirm.append(el("p", null, renderConfirmText()));
+    const buttons = el("div", "actions");
+    buttons.append(
+      makeButton("script-render-confirm", "Render anyway", null, () => {
+        scriptState.confirmingRender = false;
+        startRender();
+        renderScript();
+      }),
+      makeButton("script-render-cancel", "Cancel", "secondary", () => {
+        scriptState.confirmingRender = false;
+        renderScript();
+      }),
+    );
+    confirm.append(buttons);
+    card.append(confirm);
+  }
   card.append(render, progress, scriptStatus("render"), el("p", "meta", "Cuts the video from the saved script, on this computer only. It plays below when it is done."));
   return card;
 }
@@ -631,6 +726,9 @@ function showScriptJobs() {
   if (hint) hint.textContent = dirty ? "Unsaved edits: Write narration, Narrate and Render work from the saved file, so save first." : "";
   const confirm = document.getElementById("narrate-confirm");
   if (confirm) confirm.hidden = !scriptState.confirming || dirty;
+  const renderConfirm = document.getElementById("render-confirm");
+  if (renderConfirm) renderConfirm.hidden = !scriptState.confirmingRender || dirty;
+  busy("script-render-confirm", jobs.cut.state === "running", !saved);
 
   const progress = document.getElementById("script-render-progress");
   if (progress) {

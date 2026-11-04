@@ -210,6 +210,16 @@ video.cut-video, img.proof-card { width: 100%; max-width: 1100px; border-radius:
 progress { width: 100%; max-width: 720px; height: 14px; margin-top: 10px; }
 progress[hidden] { display: none; }
 
+.active-line { padding-top: 0; padding-bottom: 6px; }
+#active-line { margin: 0; font-size: 16px; font-weight: 600; color: var(--accent); }
+.switch-prompt { border: 2px solid var(--accent); }
+.switch-prompt .actions { margin: 10px 0 0; }
+
+.badge.standin { background: #fee4e2; border-color: #b42318; color: #912018; font-weight: 700; }
+.badge.standin-unknown { background: #fef0c7; border-color: #b54708; color: #93370d; font-weight: 700; }
+.voice-line { margin: 0; font-size: 18px; font-weight: 600; color: #1a7f37; }
+.voice-line.not-voiced { color: #b42318; }
+
 /* Script page */
 button.small { padding: 4px 12px; font-size: 15px; }
 button.danger { background: #b42318; border-color: #b42318; }
