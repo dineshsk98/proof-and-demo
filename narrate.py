@@ -10,6 +10,7 @@ import requests
 
 from env import load_env_file
 from redact import redact_text
+from usage import log_call
 
 # Narration in the builder's cloned voice. One ElevenLabs text-to-speech call per line: per storyline step, or
 # (with --script) per segment of a script from script_narration.py, stitched so the lines sound like one read.
@@ -44,8 +45,9 @@ REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT_DIR = os.path.normpath(os.path.join(REPO_DIR, "..", "workspace", "assets", "narration"))
 
 
-def speak(text, voice_id, api_key, stitching=None):
+def speak(text, voice_id, api_key, stitching=None, target=None):
     # One call. The reply body is the MP3 itself, not JSON. stitching: extra fields for --script.
+    # target goes in workspace/usage.jsonl: the script or storyline the line is from.
     try:
         response = requests.post(
             URL.format(voice_id=voice_id),
@@ -58,6 +60,9 @@ def speak(text, voice_id, api_key, stitching=None):
         sys.exit(f"Could not reach ElevenLabs: {error}")
     if response.status_code != 200:
         sys.exit(f"ElevenLabs returned {response.status_code}: {response.text[:500]}")
+    # Logged too, but ElevenLabs is not Meta: its line says provider "elevenlabs" and meta false.
+    log_call(MODEL, "narration voice", target, len(text) / 1000 * PRICE_PER_1K_CHARACTERS_USD, provider="elevenlabs",
+             characters=len(text))
     return response
 
 
@@ -144,7 +149,7 @@ def narrate_script(args):
                 stitching["previous_request_ids"] = request_ids[-STITCH_IDS:]
             if i + 1 < len(lines):
                 stitching["next_text"] = texts[lines[i + 1]["id"]]
-            response = speak(texts[s["id"]], voice_id, api_key, stitching)
+            response = speak(texts[s["id"]], voice_id, api_key, stitching, f"{os.path.basename(args.script)} {s['id']}")
             raw = os.path.join(clip_dir, f"{s['id']}-raw.mp3")
             with open(raw, "wb") as f:
                 f.write(response.content)
@@ -213,7 +218,7 @@ def main():
     for step, text in zip(steps, texts):
         path = os.path.join(clip_dir, f"step-{step['number']}.mp3")
         with open(path, "wb") as f:
-            f.write(speak(text, voice_id, api_key).content)
+            f.write(speak(text, voice_id, api_key, target=f"{os.path.basename(args.storyline)} step {step['number']}").content)
         seconds = audio_seconds(path)
         note = ""
         if seconds > step["target_seconds"]:

@@ -276,6 +276,13 @@ input[type=number] { font: inherit; padding: 8px 12px; border: 1px solid var(--l
 .focus-editor .form-row:first-child { width: 280px; }
 .focus-editor .form-row { width: 110px; }
 
+/* Meta models page */
+.usage-table { width: 100%; border-collapse: collapse; margin: 8px 0 10px; }
+.usage-table th { text-align: left; font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); }
+.usage-table td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.pill.maker-meta { background: #dbeafe; color: #1e40af; }
+.pill.maker-other { background: #eaecf0; color: #344054; }
+
 /* Running jobs: a spinner before the first line of any running status, so a long job never looks dead */
 .job-status.running::before, #draft-status.running::before {
   content: "";

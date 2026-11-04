@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from draft_storyline import STEP_FIELDS, VARIANT_FIELDS
 from env import load_env_file
+from usage import credit_summary, read_usage, usage_by_model, votes_for
 from validate_script import check_script, probe_seconds, probe_size
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -666,6 +667,38 @@ def get_script(file: str):
     takes = {s["take"] for s in data.get("segments", []) if isinstance(s, dict) and s.get("take")}
     audio = script_audio(data["segments"]) if not script_problem(data) else {"kinds": {}, "lines": 0, "voiced": 0, "label": "none"}
     return {"file": os.path.basename(path), "data": data, "take_sizes": {take: take_size(take) for take in takes if take_size(take)}, "audio": audio}
+
+
+# ---------- Meta models: which model did which job, and what it cost ----------
+
+@app.get("/api/usage")
+def get_usage():
+    # Per model: the jobs it did, its calls and their cost, from workspace/usage.jsonl (one line per real model call).
+    lines = read_usage(os.path.join(WORKSPACE_DIR, "usage.jsonl"))
+    return {"calls": len(lines), "since": lines[0]["time"] if lines else None, "models": usage_by_model(lines)}
+
+
+@app.get("/api/credits")
+def get_credits(file: str):
+    # Which model did which job in one script: its segments' credits, plus the take-check votes on the steps it shows
+    # (from the check it was planned from, when that file is still there).
+    path = inside(SCRIPTS_DIR, file, [".json"])
+    if not path:
+        return JSONResponse({"error": f"No such script: {file}"}, status_code=404)
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    segments = [s for s in data.get("segments") or [] if isinstance(s, dict)]
+    check_path = (data.get("source") or {}).get("check")
+    votes = []
+    if check_path:
+        check_path = check_path if os.path.isabs(check_path) else os.path.join(SCRIPTS_DIR, check_path)
+        try:
+            with open(check_path, encoding="utf-8") as f:
+                votes = votes_for(segments, json.load(f))
+        except (OSError, json.JSONDecodeError):
+            check_path = None  # gone or unreadable: the page says the votes aren't counted
+    return {"file": os.path.basename(path), "check": os.path.basename(check_path) if check_path else None,
+            "models": credit_summary(segments, votes)}
 
 
 @app.post("/api/script")

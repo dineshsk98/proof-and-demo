@@ -13,6 +13,8 @@ import threading
 import time
 import types
 
+os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py logs the fake calls here, not in the real workspace
+
 import draft_storyline
 
 draft_storyline.HEARTBEAT_SECONDS = 0.1

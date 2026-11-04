@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from env import load_env_file
 from redact import redact_text
+from usage import log_call
 
 # Title card and thumbnail. Muse Image paints a text-free background (one call, $0.01);
 # Pillow then writes the title and subtitle on top. Image models misspell words and smear
@@ -187,12 +188,14 @@ def get_api_key():
     return api_key
 
 
-def paint(prompt, api_key):
-    # Redact the prompt, then make one Muse Image call.
+def paint(prompt, api_key, job, target):
+    # Redact the prompt, then make one Muse Image call. job and target go in workspace/usage.jsonl.
     clean, findings = redact_text(prompt)
     if findings:
         print(f"Redacted {len(findings)} findings from the prompt before the call")
-    return generate_background(clean, api_key)
+    background = generate_background(clean, api_key)
+    log_call(MODEL, job, target, PRICE_PER_IMAGE, images=1)
+    return background
 
 
 def make_title_assets(args):
@@ -208,7 +211,7 @@ def make_title_assets(args):
         prompt = read_prompt(prompt_file)
         if not prompt:
             sys.exit(f"{prompt_file} has no prompt text in it.")
-        background = paint(prompt, api_key)
+        background = paint(prompt, api_key, "title card", args.title)
         background.save(os.path.join(args.out_dir, "background.png"))
         calls = 1
 
@@ -251,7 +254,8 @@ def make_chapters(args):
     os.makedirs(card_dir, exist_ok=True)
     result = []
     for step, title in zip(steps, titles):
-        background = paint(style.replace("{step_title}", title), api_key)
+        background = paint(style.replace("{step_title}", title), api_key, "chapter card",
+                           f"{os.path.basename(args.chapters)} step {step['number']}")
         card = render(background, TITLE_CARD_SIZE, title, "", 120, 0, 0.5, kicker=f"Step {step['number']}", kicker_pixels=84)
         path = os.path.join(card_dir, f"step-{step['number']}.png")
         card.save(path)
@@ -279,7 +283,7 @@ def make_split(args):
         prompt = read_prompt(prompt_file)
         if not prompt:
             sys.exit(f"{prompt_file} has no prompt text in it.")
-        background = paint(prompt, api_key)
+        background = paint(prompt, api_key, "before/after card", f"{left_label} / {right_label}")
         background.save(os.path.join(args.out_dir, "before-after-background.png"))
         calls = 1
     path = os.path.join(args.out_dir, "before-after.png")

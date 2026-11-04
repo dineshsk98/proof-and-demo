@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from redact import redact_image, redact_text
+from usage import credit_summary, votes_for
 
 # Stage 3, the final cut: picks the stretches the take checker chose, opens with the title card (or, with --preview,
 # a labelled preview of the payoff), eases in on wherever the screen changes, trims still screens, speeds up and
@@ -849,6 +850,19 @@ def join_parts(parts, narration, music, total, work_dir, out_path):
 
 # ---------- Proof card ----------
 
+def meta_credit_lines(summary):
+    # The proof card's lines for usage.credit_summary: one per Meta model, then one line for every other model or
+    # person, marked as not Meta (one line, so it takes little room). Only what this render's script and take check
+    # record, so nothing is claimed that didn't happen.
+    lines = [f"{e['name']}: " + "; ".join(job["text"] for job in e["jobs"]) for e in summary if e["meta"]]
+    others = [f"{e['name']} " + "; ".join(job["text"] for job in e["jobs"]) for e in summary if not e["meta"]]
+    if not lines:
+        lines.append("None recorded for this render")
+    if others:
+        lines.append("Not Meta: " + "; ".join(others))
+    return lines
+
+
 def make_proof_card(log, thumbs, path):
     img = Image.new("RGB", (W, H), (18, 20, 26))
     d = ImageDraw.Draw(img)
@@ -906,6 +920,7 @@ def make_proof_card(log, thumbs, path):
             f"{red['secrets_found']} secret(s) found and boxed: {kinds}",
             f"{red['frames_read']} frames read by local OCR across {red['stable_stretches']} stable stretches",
         ]),
+        ("What each Meta model did", meta_credit_lines(log["meta_credits"])),
     ]
     y = 190
     for heading, lines in sections:
@@ -913,7 +928,7 @@ def make_proof_card(log, thumbs, path):
         y += 50
         for line in lines:
             for part in wrap(d, line, body, 680):
-                if y > 900:
+                if y > 940:  # the last line still ends well above the footer line at 1010
                     break
                 d.text((1180, y), part, font=body, fill=grey)
                 y += 33
@@ -1274,6 +1289,7 @@ def cut_from_script(script, check, args):
     cut = {"one_take": one_take, "stretches": stretches, "pieces": pieces, "preview": preview, "trims": trims,
            "base_label": base_label, "title_card": title["card"] if title else None, "title_s": title_s,
            "proof_s": proof_s, "warnings": warnings, "chapters": chapters,
+           "script_segments": segs,  # for their credits: which model did which job, on the proof card
            "sources": {"check_json": os.path.abspath(resolve(source["check"], script_dir)), "narration_json": None,
                        "script": os.path.abspath(args.script), "title_card": title["card"] if title else None,
                        "storyline": source.get("storyline"), "variant": source.get("variant")}}
@@ -1382,6 +1398,9 @@ def render_cut(cut, check, base_dir, args, started):
                 "narration": clip["file"] if clip else None,
                 "narration_s": round(clip["duration_s"], 3) if clip else None,
             })
+        # Which model did what in this render: the script's segment credits (none when cut straight from a check),
+        # and every take-check vote on the steps it shows.
+        meta_credits = credit_summary(cut.get("script_segments", []), votes_for(stretches, check))
         chapters = cut.get("chapters", [])
         for i, ch in enumerate(chapters):
             # Chapter cards come from another tool, and they are in the video, so they are read for secrets too.
@@ -1441,6 +1460,7 @@ def render_cut(cut, check, base_dir, args, started):
             "chapters": [{"segment": ch["segment"], "image": ch["image"], "out_start_s": ch["out_start_s"],
                           "out_end_s": ch["out_end_s"], "secrets_boxed": len(ch["findings"])} for ch in chapters],
             "narration_coverage": round(sum(c["duration_s"] for c in narration) / total, 3),
+            "meta_credits": meta_credits,
             "captions": [{"step": c["step"], "text": " ".join(c["lines"]), "out_start_s": c["out_start_s"],
                           "out_end_s": c["out_end_s"]} for c in captions],
             "zoom": {"max": ZOOM_MAX, "max_upscale": ZOOM_MAX_UPSCALE, "ease_s": ZOOM_EASE_S,

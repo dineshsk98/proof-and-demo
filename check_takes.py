@@ -14,6 +14,7 @@ from PIL import Image
 
 from env import load_env_file
 from redact import redact_image
+from usage import log_call
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 THIRD_MODEL = "muse-spark-1.1"  # an older Spark for the independent third vote; standard tier, never "-contributor"
@@ -306,6 +307,9 @@ def check_take(client, take_path, steps, run_dir, frames_only=False):
     for k, (model, order) in enumerate(VOTES):
         votes, usage = ask_spark(client, model, steps, frames, order, os.path.join(run_dir, f"{stem}-vote{k + 1}"))
         usages.append(usage)
+        log_call(model, f"take-check vote ({order})", os.path.basename(take_path),
+                 (usage.input_tokens * PRICE_IN + usage.output_tokens * PRICE_OUT) / 1e6,
+                 input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
         for number, vote in votes.items():
             votes_by_step[number].append(vote)
 
