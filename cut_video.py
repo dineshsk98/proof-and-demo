@@ -863,6 +863,77 @@ def meta_credit_lines(summary):
     return lines
 
 
+CARD_BOTTOM = 990  # nothing on the proof card goes below this: the footer line is centred at y=1010
+MAX_SPEED_UP_LINES = 3  # more sped-up waits than this are summed up in one line (each one is in the cut log)
+RIGHT_SIZES = [27, 25, 23]  # the right column's text gets smaller, down to 23 px, before any edit is left out
+
+
+def edit_lines(log):
+    # Every edit in short lines. Stitches and holds are listed one by one, first, so if the list is too long for the
+    # card it is the last lines that make way. The preview, many sped-up waits and the trims share one line.
+    edits = [f"{s['label']} (at {clock(s['out_s'])})" for s in log["stitches"]]
+    edits += [f"HELD FRAME {h['seconds']:.1f} s at {clock(h['out_start_s'])}: step {h['step']}'s narration runs on"
+              for h in log["holds"]]
+    speed_ups = log["speed_ups"]
+    if len(speed_ups) <= MAX_SPEED_UP_LINES:
+        edits += [f"SPED UP {s['speed']:g}x: {take_name(s['take'])} {clock(s['src_start_s'])}–{clock(s['src_end_s'])} "
+                  f"→ {s['out_end_s'] - s['out_start_s']:.1f} s" for s in speed_ups]
+    shared = []
+    if log["preview"]:
+        p = log["preview"]
+        shared.append(f"PREVIEW of {take_name(p['take'])} {clock(p['src_start_s'])}–{clock(p['src_end_s'])}")
+    if len(speed_ups) > MAX_SPEED_UP_LINES:
+        speeds = "/".join(f"{v:g}x" for v in sorted({s["speed"] for s in speed_ups}))
+        source = sum(s["src_end_s"] - s["src_start_s"] for s in speed_ups)
+        shown = sum(s["out_end_s"] - s["out_start_s"] for s in speed_ups)
+        shared.append(f"SPED UP {speeds}: {len(speed_ups)} waits, {source:.1f} s → {shown:.1f} s (list in the cut log)")
+    if log["trims"]:
+        shared.append(f"TRIMMED {len(log['trims'])} still screen(s), {sum(t['end_s'] - t['start_s'] for t in log['trims']):.1f} s")
+    if shared:
+        edits.append("; ".join(shared))
+    return edits or ["None: 1x throughout"]
+
+
+def wrapped(draw, lines, font, width):
+    # Each line wrapped to width: a list of rows per line. A line never ends on a row with one word on its own
+    # (a lone "s" or "lines"): the word before it moves down too.
+    result = []
+    for line in lines:
+        rows = wrap(draw, line, font, width)
+        if len(rows) > 1 and " " not in rows[-1] and " " in rows[-2]:
+            before, moved = rows[-2].rsplit(" ", 1)
+            rows[-2:] = [before, f"{moved} {rows[-1]}"]
+        result.append(rows)
+    return result
+
+
+def section_height(rows, row=33):
+    # A heading (50 px), row px per row with 6 px after each line, and 22 px before the next section.
+    return 50 + sum(row * len(r) + 6 for r in rows) + 22
+
+
+def shorten(rows, height, row=33):
+    # The first lines that fit in height, then "+ N more", so a long list never runs off the card.
+    if section_height(rows, row) <= height:
+        return rows
+    kept = []
+    while len(kept) < len(rows) and section_height(kept + [rows[len(kept)], ["+"]], row) <= height:
+        kept.append(rows[len(kept)])
+    return kept + [[f"+ {len(rows) - len(kept)} more, all listed in the cut log"]]
+
+
+def draw_section(draw, x, y, heading, rows, head, body, fill, row=33):
+    # Draws a heading and its lines from y, row px apart. Returns where the next section starts.
+    draw.text((x, y), heading, font=head, fill="white")
+    y += 50
+    for line in rows:
+        for part in line:
+            draw.text((x, y), part, font=body, fill=fill)
+            y += row
+        y += 6
+    return y + 22
+
+
 def make_proof_card(log, thumbs, path):
     img = Image.new("RGB", (W, H), (18, 20, 26))
     d = ImageDraw.Draw(img)
@@ -893,49 +964,45 @@ def make_proof_card(log, thumbs, path):
         x = 60 + tw + 24
         d.text((x, y), f"Step {step['number']} · {step['verdict']} · {take_name(step['take'])} "
                        f"{clock(step['start_s'])}–{clock(step['end_s'])}", font=head, fill="white")
-        for i, line in enumerate(wrap(d, step["expected_end_state"], body, 1120 - x)[:3]):
+        lines = wrap(d, step["expected_end_state"], body, 1120 - x)
+        room = max(1, min(3, (row_h - 50) // 33))  # the lines this row has room for (5 or 6 steps: fewer)
+        if len(lines) > room:
+            lines = lines[:room - 1] + [lines[room - 1] + " …"]
+        for i, line in enumerate(lines):
             d.text((x, y + 44 + i * 33), line, font=body, fill=grey)
         y += row_h
 
-    # Right: every edit, then the redaction counts.
-    edits = []
-    if log["preview"]:
-        p = log["preview"]
-        edits.append(f"PREVIEW first: {take_name(p['take'])} {clock(p['src_start_s'])}–{clock(p['src_end_s'])}, "
-                     f"shown again in its place")
-    edits += [f"SPED UP {s['speed']:g}x: {take_name(s['take'])} {clock(s['src_start_s'])}–{clock(s['src_end_s'])}, "
-              f"{s['src_end_s'] - s['src_start_s']:.1f} s shown in {s['out_end_s'] - s['out_start_s']:.1f} s"
-              for s in log["speed_ups"]]
-    if log["trims"]:
-        edits.append(f"TRIMMED {len(log['trims'])} still screen(s), "
-                     f"{sum(t['end_s'] - t['start_s'] for t in log['trims']):.1f} s in all")
-    edits += [f"{s['label']} (at {clock(s['out_s'])} in the video)" for s in log["stitches"]]
-    edits += [f"HELD FRAME {h['seconds']:.1f} s at {clock(h['out_start_s'])}, so step {h['step']}'s narration isn't cut"
-              for h in log["holds"]]
+    # Every section is measured before it is drawn, so nothing runs off the card. "What each Meta model did" goes
+    # under the steps on the left when there is room there, else on the right.
     red = log["redaction"]
     kinds = ", ".join(f"{n} {kind}" for kind, n in red["counts"].items()) or "none"
-    sections = [
-        ("Edits (all labelled in the video)", edits or ["None: 1x throughout"]),
-        ("Redaction (local, solid boxes)", [
-            f"{red['secrets_found']} secret(s) found and boxed: {kinds}",
-            f"{red['frames_read']} frames read by local OCR across {red['stable_stretches']} stable stretches",
-        ]),
-        ("What each Meta model did", meta_credit_lines(log["meta_credits"])),
-    ]
-    y = 190
-    for heading, lines in sections:
-        d.text((1180, y), heading, font=head, fill="white")
-        y += 50
-        for line in lines:
-            for part in wrap(d, line, body, 680):
-                if y > 940:  # the last line still ends well above the footer line at 1010
-                    break
-                d.text((1180, y), part, font=body, fill=grey)
-                y += 33
-            y += 8
-        y += 30
+    redaction = [f"{red['secrets_found']} secret(s) found and boxed: {kinds}",
+                 f"{red['frames_read']} frames read by local OCR across {red['stable_stretches']} stable stretches"]
+    credits = meta_credit_lines(log["meta_credits"])
+    left_top = 190 + len(log["steps"]) * row_h + 20
+    credits_left = wrapped(d, credits, body, 1060)
+    on_left = left_top + section_height(credits_left) <= CARD_BOTTOM
+    if on_left:
+        draw_section(d, 60, left_top, "What each Meta model did", credits_left, head, body, grey)
 
-    d.text((W // 2, 1010), "Cut by the tool from takes recorded during the event", font=head, fill="white", anchor="mm")
+    # Right: the edits, the credits if they aren't on the left, and the redaction counts. The text gets smaller,
+    # down to 23 px, until it all fits. If it still doesn't, the edits list ends with "+ N more".
+    texts = [("Edits (all labelled in the video)", edit_lines(log))]
+    texts += [] if on_left else [("What each Meta model did", credits)]
+    texts += [("Redaction (local, solid boxes)", redaction)]
+    for size in RIGHT_SIZES:
+        font, row = ImageFont.truetype(UI_FONT, size), round(size * 1.22)
+        right = [(heading, wrapped(d, lines, font, 680)) for heading, lines in texts]
+        if sum(section_height(rows, row) for _, rows in right) <= CARD_BOTTOM - 190:
+            break
+    else:
+        room = CARD_BOTTOM - 190 - sum(section_height(rows, row) for _, rows in right[1:])
+        right[0] = (right[0][0], shorten(right[0][1], room, row))
+    y = 190
+    for heading, rows in right:
+        y = draw_section(d, 1180, y, heading, rows, head, font, grey, row)
+
+    d.text((W // 2, 1010), "Cut by the tool from the takes listed on this card", font=head, fill="white", anchor="mm")
     img.save(path)
 
 
