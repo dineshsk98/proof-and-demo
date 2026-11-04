@@ -22,7 +22,7 @@ from usage import log_call
 
 MODEL = "muse-spark-1.3"  # standard tier; never a "-contributor" model
 BASE_URL = "https://api.meta.ai/v1"
-MAX_OUTPUT_TOKENS = 12000  # a short line per segment, plus reasoning (reasoning counts toward this)
+MAX_OUTPUT_TOKENS = 24000  # a short line per segment, plus reasoning (reasoning counts toward this)
 PRICE_IN, PRICE_OUT = 1.25, 4.25  # USD per million tokens, standard tier (reasoning bills as output)
 FILL_MIN, FILL_MAX = 0.7, 1.0  # a line fills this share of its segment at the script's words_per_second
 LINE_GAP_S = 0.3  # the quiet after each line (cut_video.py's LINE_GAP_S): a line can't use it
