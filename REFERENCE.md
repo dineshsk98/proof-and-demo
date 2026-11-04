@@ -1,10 +1,10 @@
 # Proof & Demo: reference
 
-Per-script detail for Proof & Demo. The [README](README.md) covers what it is, how to install it and the end-to-end flow.
+Per-tool detail for Proof & Demo. The [README](README.md) covers what it is, how to install it, the end-to-end flow and the repository layout. Each section below is named after its module in `proof_and_demo/`.
 
 Every tool is a module in the `proof_and_demo/` package, run from the repo folder as `python -m proof_and_demo.<tool>`. Every tool that calls Meta reads `MODEL_API_KEY` from `.env` in the repo folder (through `env.py`). They use `muse-spark-1.3`, `muse-spark-1.1`, `muse-image-1.0` or `muse-voice-transcribe-1.0` on the standard tier, never a `-contributor` model. Text and images are redacted locally first; audio is sent as it is.
 
-By default, the scripts read and write a `workspace/` folder next to the repo folder (`../workspace/`). Most scripts take `--out-dir` to write elsewhere. The web app's `WORKSPACE_DIR` environment variable points the app at another folder, e.g. `tests/sample_workspace`.
+By default, the tools read and write a `workspace/` folder next to the repo folder (`../workspace/`). Most tools take `--out-dir` to write elsewhere. The web app's `WORKSPACE_DIR` environment variable points the app at another folder, e.g. `tests/sample_workspace`.
 
 Contents:
 - [smoke_test.py](#smoke_testpy): check your key
@@ -308,7 +308,7 @@ Not in the app: the claim check, `make_assets.py --chapters`, `--split` and `--a
 
 ## Costs
 
-The prices the scripts use for their estimates:
+The prices the tools use for their estimates:
 
 | Model | Price |
 |---|---|
@@ -339,7 +339,8 @@ Every test below is offline: nothing is sent to Meta or ElevenLabs. Most need ff
 | Narration check | `python tests/narration_check/test_check_narration.py` |
 | Meta credits and the usage log | `python tests/meta_credits/test_meta_credits.py` |
 | Script editor | `python tests/script_editor/test_script_editor.py` |
+| The web app answers only its own pages (Host and Origin) | `python tests/web_app/test_own_pages_only.py` |
 
 `python -m tests` runs every `tests/<area>/test_*.py` file in its own process and prints pass or fail per file and a total (`python -m tests narration` runs only the files whose path contains "narration"). The recall test and the final cut on synthetic takes are run by hand.
 
-`make_samples.py` writes the synthetic takes to `tests/final_cut/out/` and the take check to `tests/final_cut/sample-check.json` (both left out of git), so the final-cut test runs from a fresh clone. The script editor's sample workspace is `tests/sample_workspace/`.
+`make_samples.py` writes the synthetic takes to `tests/final_cut/out/` and the take check to `tests/final_cut/sample-check.json` (both left out of git), so the synthetic final cut runs from a fresh clone. The script editor's sample workspace is `tests/sample_workspace/`.

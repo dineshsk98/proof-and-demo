@@ -48,7 +48,7 @@ The proof card ends with **What each Meta model did**, built only from the rende
 - Audio can't be redacted: voice notes and narration clips go to Voice Transcribe as they are.
 - Every render writes a leak report.
 - Every Meta call is on the standard tier, never a `-contributor` model.
-- The web app listens on 127.0.0.1 only.
+- The web app listens on 127.0.0.1 only, and answers only its own pages at http://127.0.0.1:8000 or http://localhost:8000.
 
 ## Install
 
@@ -88,7 +88,7 @@ Start the app and open http://127.0.0.1:8000:
 python -m proof_and_demo.app
 ```
 
-The app and the scripts read and write a `workspace/` folder next to the repo folder. Put your idea in `workspace/inputs/idea.md`, and the hackathon's rules and judging criteria in `workspace/inputs/judging.md`. Put recordings in `workspace/takes/`.
+The app and the tools read and write a `workspace/` folder next to the repo folder (see the layout below). Put your idea in `workspace/inputs/idea.md`, and the hackathon's rules and judging criteria in `workspace/inputs/judging.md`. Put recordings in `workspace/takes/`.
 
 The pages, in the order you'd use them:
 1. **Storyline:** press **Draft storyline** (in the top bar), read the variants, and edit any step. Pick the storyline file and variant to work from: the choice is kept in `workspace/app-state.json`, and every page uses it. Later, write a brief and press **Revise this variant**.
@@ -99,7 +99,7 @@ The pages, in the order you'd use them:
 
 While a job runs, its button says "Running…" and its status line shows a timer and the lines the script prints. Every Meta or ElevenLabs job is a live, paid call.
 
-Each step also runs from the command line, and a few run only there: the claim check, chapter and before/after cards, the music bed, and the narration check. Run them from the repo folder (the one that holds `proof_and_demo/`), so Python finds the package. `.env` is always read from the repo folder. The usual order:
+Each step also runs from the command line, and a few run only there: the claim check, chapter and before/after cards, the music bed, and the narration check. The usual order:
 
 ```powershell
 python -m proof_and_demo.draft_storyline ..\workspace\inputs\idea.md ..\workspace\inputs\judging.md --claim-check
@@ -115,7 +115,47 @@ python -m proof_and_demo.check_narration <script.json>
 python -m proof_and_demo.cut_video --script <script.json> --music <bed.mp3>
 ```
 
-Each step writes a new file and never overwrites the old one. Every option, output file, cost and offline test is in [REFERENCE.md](REFERENCE.md).
+Each step writes a new file and never overwrites the old one. Every option, output file, cost and offline test is in [REFERENCE.md](REFERENCE.md). `python -m tests` runs the offline tests.
+
+## Repository layout
+
+```
+proof_and_demo/          the package: one module per tool, run as python -m proof_and_demo.<tool>
+  app.py                 the web app
+  draft_storyline.py     storylines: draft, combine, revise, claim check
+  voice.py               voice notes to text
+  stage1_update.py       step checklist and readiness board
+  check_takes.py         take checks (three votes per step)
+  redact.py              local redaction (OCR and patterns)
+  make_assets.py         title card, thumbnail, chapter and before/after cards
+  make_music.py          music bed
+  cut_video.py           final cut, cut plan as a script, render from a script
+  script_narration.py    narration lines for a script
+  narrate.py             narration audio (ElevenLabs or a stand-in tone)
+  check_narration.py     checks spoken narration with Voice Transcribe
+  improve_script.py      improves chosen script lines
+  validate_script.py     the Script page's free Validate check
+  usage.py               the usage.jsonl log and per-model totals
+  env.py                 reads .env from the repo folder
+  smoke_test.py          checks the key with one small call
+  prompts/               every prompt sent to a model
+  static/                the web app's HTML, JS and CSS
+tests/                   offline tests, one folder per area; python -m tests runs them all
+../workspace/            outside the repo: your inputs and everything the tools write
+  inputs/                idea.md, judging.md and briefs/ for revisions
+  sessions/              your session docs
+  voice-notes/           voice notes and their transcripts
+  storylines/            drafted, combined, revised and edited storylines
+  checklists/            step checklists and readiness boards
+  takes/                 your recordings; checks/ holds the take checks
+  scripts/               cut plans as editable scripts; improvements/ holds proposed rewrites
+  assets/                title card, thumbnail, background, chapters/, narration/ and music/
+  final/                 rendered videos, proof cards, cut logs and leak reports
+  usage.jsonl            one line per real model call
+  app-state.json         the storyline and variant the app works from
+```
+
+Run every command from the repo folder (the one that holds `proof_and_demo/`), so Python finds the package. `.env` is always read from the repo folder.
 
 ## Limitations
 
