@@ -105,7 +105,7 @@ function showTakesJobs() {
   const status = document.getElementById("check-status");
   if (!status) return; // the form isn't drawn (no checklists)
   const job = jobs.check;
-  document.getElementById("check-button").disabled = job.state === "running";
+  setBusy(document.getElementById("check-button"), job.state === "running");
   status.className = "job-status " + (notices.check ? "failed" : job.state);
   status.textContent = notices.check || jobText(job, `Checking ${(job.takes || []).join(", ")} against ${job.checklist}. Redacting a frame takes about 17 s.`);
 }

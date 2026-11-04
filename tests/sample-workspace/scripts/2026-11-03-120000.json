@@ -1,0 +1,214 @@
+{
+  "source": {
+    "check": "takes/checks/sample-check.json",
+    "storyline": "storylines/storyline-sample.json",
+    "variant": 1
+  },
+  "words_per_second": 2.5,
+  "segments": [
+    {
+      "id": "s01",
+      "kind": "preview",
+      "step": null,
+      "take": "takes/sample-take.mp4",
+      "start_s": 20.0,
+      "end_s": 24.0,
+      "speed": 1,
+      "label": "PREVIEW",
+      "caption": "Where it ends",
+      "narration": "Your last demo broke on camera. Here is how this tool stops that from happening to you again.",
+      "frame": "frames/s01.png",
+      "audio": null,
+      "audio_s": null,
+      "credits": [
+        {
+          "model": "muse-spark-1.3",
+          "job": "narration line"
+        }
+      ]
+    },
+    {
+      "id": "s02",
+      "kind": "title",
+      "step": null,
+      "take": null,
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "speed": 1,
+      "label": "",
+      "caption": "",
+      "narration": "",
+      "frame": null,
+      "audio": null,
+      "audio_s": null
+    },
+    {
+      "id": "s03",
+      "kind": "footage",
+      "step": 1,
+      "take": "takes/sample-take.mp4",
+      "start_s": 2.0,
+      "end_s": 10.0,
+      "speed": 1,
+      "label": "1x",
+      "caption": "Day one: the plan",
+      "narration": "On day one it plans the demo. It reads the idea and the judging rules, then writes the steps.",
+      "frame": "frames/s03.png",
+      "audio": "audio/s03.wav",
+      "audio_s": 1.5,
+      "focus": {
+        "box": [
+          160,
+          90,
+          320,
+          180
+        ],
+        "target": "the storyline step list",
+        "source": "sam-3.1"
+      },
+      "asr": {
+        "text": "On day one it plans the demo. It reads the idea and the judging rules, then writes the steps.",
+        "match": 0.97,
+        "flagged": [],
+        "words": null
+      },
+      "credits": [
+        {
+          "model": "muse-spark-1.3",
+          "job": "narration line"
+        },
+        {
+          "model": "Dinesh",
+          "job": "edited"
+        }
+      ]
+    },
+    {
+      "id": "s04",
+      "kind": "wait",
+      "step": 2,
+      "take": "takes/sample-take.mp4",
+      "start_s": 30.0,
+      "end_s": 70.0,
+      "speed": 4,
+      "label": "SPED UP 4x",
+      "caption": "Waiting for the checklist",
+      "narration": "",
+      "frame": "frames/s04.png",
+      "audio": null,
+      "audio_s": null
+    },
+    {
+      "id": "s09",
+      "kind": "chapter",
+      "step": 2,
+      "take": null,
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "speed": 1,
+      "label": "",
+      "caption": "Chapter 2: Progress from docs",
+      "narration": "Next: my notes become a checklist.",
+      "frame": null,
+      "audio": null,
+      "audio_s": null,
+      "image": "frames/chapter-2.png",
+      "credits": [
+        {
+          "model": "muse-image",
+          "job": "chapter card"
+        }
+      ]
+    },
+    {
+      "id": "s05",
+      "kind": "footage",
+      "step": 2,
+      "take": "takes/sample-take.mp4",
+      "start_s": 70.0,
+      "end_s": 78.0,
+      "speed": 1,
+      "label": "1x",
+      "caption": "Progress from docs",
+      "narration": "It reads my notes, never my code. The checklist comes back in under two minutes, with 47 findings found.",
+      "frame": "frames/s05.png",
+      "audio": "audio/s03.wav",
+      "audio_s": 1.5,
+      "asr": {
+        "text": "It reads my notes never my code. The checklist comes back in under two minutes with forty seven findings fined.",
+        "match": 0.82,
+        "flagged": [
+          "forty",
+          "seven",
+          "fined"
+        ],
+        "words": null
+      },
+      "credits": [
+        {
+          "model": "muse-spark-1.3",
+          "job": "narration line"
+        },
+        {
+          "model": "muse-spark-1.3",
+          "job": "improved line"
+        }
+      ]
+    },
+    {
+      "id": "s06",
+      "kind": "footage",
+      "step": 3,
+      "take": "takes/sample-take.mp4",
+      "start_s": 90.0,
+      "end_s": 98.0,
+      "speed": 1,
+      "label": "1x",
+      "caption": "Secrets boxed out",
+      "narration": "Meta never sees your secrets. Here is a fake key at jane.doe@example.com getting a solid box.",
+      "frame": "frames/s06.png",
+      "audio": null,
+      "audio_s": null
+    },
+    {
+      "id": "s07",
+      "kind": "footage",
+      "step": 4,
+      "take": "takes/sample-take.mp4",
+      "start_s": 120.0,
+      "end_s": 110.0,
+      "speed": 1,
+      "label": "1x",
+      "caption": "Take check",
+      "narration": "Step 3 failed at 0:42",
+      "frame": "frames/s07.png",
+      "audio": null,
+      "audio_s": null,
+      "focus": {
+        "box": [
+          10,
+          10,
+          0,
+          50
+        ],
+        "target": "the failed step",
+        "source": "sam-3.1"
+      }
+    },
+    {
+      "id": "s08",
+      "kind": "proof",
+      "step": null,
+      "take": null,
+      "start_s": 0.0,
+      "end_s": 6.0,
+      "speed": 1,
+      "label": "",
+      "caption": "Proof card",
+      "narration": "",
+      "frame": null,
+      "audio": null,
+      "audio_s": null
+    }
+  ]
+}
