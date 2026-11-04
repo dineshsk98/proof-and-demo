@@ -258,6 +258,9 @@ def test_proof_card_lines_from_credits():
     stretches = [{"take": "D:/takes/take-02.mp4", "step": 1, "start_s": 0, "end_s": 5}]  # the cut's stretches work too
     old = cut_video.meta_credit_lines(usage.credit_summary([], usage.votes_for(stretches, old_check)))
     assert old == ["Muse Spark 1.3: cast 2 take-check votes"], old
+    # The synthetic sample checks keep bare strings as votes ("pass"): they are skipped, not a crash.
+    bare = {"takes": [{"file": "out/take1.mp4", "steps": [{"number": 1, "votes": ["pass", "pass", "pass"]}]}]}
+    assert usage.votes_for([{"take": "out/take1.mp4", "step": 1}], bare) == []
     print(f"ok  proof card lines: {len(lines)} for a script with no Meta credits, 5 for the full one, "
           "and an older check's votes go to the model it names")
 
