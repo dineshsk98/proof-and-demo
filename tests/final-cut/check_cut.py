@@ -29,6 +29,7 @@ SYNC_TOLERANCE_S = 0.05
 # The tones in make_samples.py. Each one is measured on its own, so narration and take audio can be told apart.
 BEEP_HZ, ROOM_TONE_HZ = 1000, 220
 NARRATION_HZ = {1: 440, 2: 550, 3: 660}
+STAND_IN_HZ = 600  # narrate.py --stand-in's tone
 TONE_WINDOW = 1920  # 40 ms: narrow enough in frequency that 220 Hz and 440 Hz don't leak into each other
 DUCK_TOLERANCE = 0.06  # how far the measured take-audio gain may be from the expected one
 DUCK_SKIP_S = 0.1  # the first moments of a drop change faster than a 40 ms window can follow; not compared
@@ -168,6 +169,38 @@ def main():
                 if found:
                     failures.append(f"secret readable in {os.path.basename(path)}")
 
+    # 4. Narration lines (from a script): how much of the video has a voice, and the quiet between lines.
+    clips = log.get("narration_clips") or []
+    if clips and log.get("script"):
+        lines = sorted((c["out_start_s"], c["out_start_s"] + c["duration_s"]) for c in clips)
+        voiced = sum(b - a for a, b in lines)
+        print(f"Narration: {len(lines)} lines, {voiced:.1f} s of voice over {duration:.1f} s "
+              f"({voiced / duration:.0%} of the video)")
+        gaps = [b[0] - a[1] for a, b in zip(lines, lines[1:])]
+        if gaps:
+            print(f"  Quiet between lines: shortest {min(gaps):.2f} s, longest {max(gaps):.2f} s")
+            if min(gaps) < log["line_gap_s"] - 0.01:
+                failures.append(f"two lines are only {min(gaps):.2f} s apart (want {log['line_gap_s']} s)")
+        if lines[-1][1] > duration + 0.01:
+            failures.append("the last line runs past the end of the video")
+        if all("stand-in-" in c["file"] for c in clips):
+            # Stand-in lines are a steady tone: find each one in the video and check it starts and ends on time.
+            times, levels = tone_levels(audio_samples(video), [STAND_IN_HZ])
+            rises, falls = rising_edges(levels[STAND_IN_HZ], 0.02, times), falling_edges(levels[STAND_IN_HZ], 0.02, times)
+            if levels[STAND_IN_HZ][0] > 0.02:
+                rises.insert(0, 0.0)  # a line that starts with the video has no edge to find
+            worst = 0
+            for a, b in lines:
+                start = min(rises, key=lambda t: abs(t - a), default=None)
+                end = min(falls, key=lambda t: abs(t - b), default=None)
+                if start is None or end is None:
+                    failures.append(f"line at {a:.2f} s not found in the audio")
+                    continue
+                worst = max(worst, abs(start - a), abs(end - b))
+            print(f"  Stand-in lines found in the audio: worst start/end error {worst * 1000:.0f} ms")
+            if worst > SYNC_TOLERANCE_S:
+                failures.append(f"a line starts or ends {worst * 1000:.0f} ms off its place in the cut log")
+
     if args.no_sync:
         print("PASS" if not failures else "FAIL:\n  " + "\n  ".join(failures))
         sys.exit(1 if failures else 0)
@@ -236,6 +269,8 @@ def main():
 
         # Ducking: the room tone runs all through each take at one level, so its level in the video is the take-audio gain.
         clips = [(s["out_start_s"], s["out_start_s"] + s["narration_s"]) for s in log["steps"] if s["narration"]]
+        if log.get("script"):
+            clips = [(c["out_start_s"], c["out_start_s"] + c["duration_s"]) for c in log["narration_clips"]]
         audible = [(p["out_start_s"], p["out_end_s"] - p["hold_s"]) for p in log["pieces"]
                    if p["speed"] == 1 and not p["preview"]]
         heard = np.array([inside(t, audible, margin=-0.03) for t in times])  # take audio playing, away from part edges
