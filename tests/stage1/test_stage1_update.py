@@ -1,5 +1,4 @@
 # Offline tests for stage1_update.py: a fake client, so nothing is sent to Meta.
-# They use the real redact.py when it exists, and a fake redact module otherwise.
 # Run: python tests/stage1/test_stage1_update.py
 import contextlib
 import copy
@@ -7,7 +6,6 @@ import glob
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import types
@@ -20,23 +18,7 @@ os.environ["WORKSPACE_DIR"] = tempfile.mkdtemp(prefix="usage-log-")  # usage.py 
 SECRET = "sk-test-PLANTED-0000-abcdefgh"  # long enough for redact.py's sk- pattern (20+ chars after "sk-")
 EMAIL = "alice@example.com"
 
-
-def fake_redact_text(text):
-    # Stands in for branch C's redact_text(text) -> (clean_text, findings), with the same kind names.
-    findings = []
-    for value, kind in [(SECRET, "openai_style_key"), (EMAIL, "email")]:
-        for _ in range(text.count(value)):
-            findings.append({"kind": kind, "preview": value[:3] + "…"})
-        text = text.replace(value, f"[REDACTED:{kind}]")
-    return text, findings
-
-
-if os.path.exists(os.path.join(REPO_DIR, "proof_and_demo", "redact.py")):
-    print("Using the real redact.py")
-else:
-    print("Using a fake redact module (redact.py is missing)")
-    sys.modules["redact"] = types.SimpleNamespace(redact_text=fake_redact_text)
-from proof_and_demo import stage1_update  # noqa: E402  (must come after the fake redact module)
+from proof_and_demo import stage1_update  # noqa: E402
 
 REPLY = None  # the fake model's reply text for the next call
 CALLS = []  # kwargs of every fake call, plus what was printed before it
@@ -239,18 +221,6 @@ def test_stops_before_call():
     print(f"ok  no progress files: {error}")
 
 
-def test_missing_redact_module():
-    # Runs the real script in a fresh Python, where no redact.py exists on this branch.
-    repo_dir = REPO_DIR
-    if os.path.exists(os.path.join(repo_dir, "proof_and_demo", "redact.py")):
-        print("skip  no redact.py: redact.py exists (local-redaction is merged)")
-        return
-    result = subprocess.run([sys.executable, "-m", "proof_and_demo.stage1_update", "x.json"], cwd=repo_dir, capture_output=True, text=True)
-    assert result.returncode != 0
-    assert result.stderr.strip() == "redaction module missing: merge local-redaction first", result.stderr
-    print(f"ok  no redact.py: {result.stderr.strip()}")
-
-
 def test_bad_replies():
     quote = "Upload works now: clicking Upload shows a green Saved message and the file appears in the list."
     expect_fail("fabricated evidence", bad(lambda d: d["steps"][1]["evidence"].append("The checker passed 10 takes in a row.")),
@@ -281,6 +251,5 @@ if __name__ == "__main__":
     test_variant_2()
     test_only_newest_progress_is_read()
     test_stops_before_call()
-    test_missing_redact_module()
     test_bad_replies()
     print("All tests passed.")

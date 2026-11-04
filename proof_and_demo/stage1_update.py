@@ -8,14 +8,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from proof_and_demo.env import load_env_file
-
-try:
-    from proof_and_demo.redact import redact_text  # branch C: redact_text(text) -> (clean_text, findings)
-except ModuleNotFoundError as e:
-    if e.name != "redact":
-        raise  # redact.py exists but something it imports is missing
-    sys.exit("redaction module missing: merge local-redaction first")
-
+from proof_and_demo.redact import redact_text
 from proof_and_demo.script_narration import PRICE_IN, PRICE_OUT  # the same model and tier, so the same price
 from proof_and_demo.usage import log_call
 

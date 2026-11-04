@@ -31,7 +31,7 @@ CUT_TOOL = ["-m", "proof_and_demo.cut_video"]
 ASSETS_TOOL = ["-m", "proof_and_demo.make_assets"]
 NARRATE_TOOL = ["-m", "proof_and_demo.narrate"]
 IMPROVE_TOOL = ["-m", "proof_and_demo.improve_script"]
-SCRIPT_NARRATION_TOOL = ["-m", "proof_and_demo.script_narration"]  # branch L, not merged yet
+SCRIPT_NARRATION_TOOL = ["-m", "proof_and_demo.script_narration"]
 SPEC_PATH = os.path.normpath(os.path.join(REPO_DIR, "..", "docs", "demo-tool-spec.md"))
 
 # Same folders the scripts write to. WORKSPACE_DIR points the app at another folder (tests/sample_workspace).
@@ -750,7 +750,7 @@ async def start_improve(request: Request):
 
 @app.post("/api/script/plan")
 def start_plan(check: str, storyline: str = "", variant: int = 1):
-    # Plan cut (branch L): cut_video.py <check> --plan writes a new script. No video is made.
+    # Plan cut: cut_video.py <check> --plan writes a new script. No video is made.
     check_path = inside(CHECKS_DIR, check, [".json"])
     if not check_path:
         return JSONResponse({"error": f"No such take check: {check}"}, status_code=400)
@@ -768,7 +768,7 @@ def start_plan(check: str, storyline: str = "", variant: int = 1):
 
 @app.post("/api/script/write")
 def start_write(file: str):
-    # Write narration (branch L): script_narration.py asks Spark for each line and writes a new script.
+    # Write narration: script_narration.py asks Spark for each line and writes a new script.
     script_path = inside(SCRIPTS_DIR, file, [".json"])
     if not script_path:
         return JSONResponse({"error": f"No such script: {file}"}, status_code=400)
@@ -777,7 +777,7 @@ def start_write(file: str):
 
 @app.post("/api/script/speak")
 def start_speak(file: str, stand_in: bool = False, confirm: bool = False):
-    # Narrate (branch L): narrate.py --script fills in each segment's audio. Without --stand-in that is
+    # Narrate: narrate.py --script fills in each segment's audio. Without --stand-in that is
     # a paid ElevenLabs call, so it needs confirm=true as well as the keys, and narrate.py itself wants --yes.
     script_path = inside(SCRIPTS_DIR, file, [".json"])
     if not script_path:
@@ -852,7 +852,7 @@ async def save_storyline(request: Request):
 
 @app.post("/api/revise")
 async def start_revise(request: Request):
-    # {file, variant, brief, checklist?}. Branch K's draft_storyline.py --revise reads the brief from a Markdown file.
+    # {file, variant, brief, checklist?}. draft_storyline.py --revise reads the brief from a Markdown file.
     body = await read_json(request)
     if not isinstance(body, dict) or not str(body.get("brief", "")).strip():
         return JSONResponse({"error": "Write a brief first: what should change?"}, status_code=400)
