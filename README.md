@@ -1,43 +1,135 @@
-# demo-tool (working name)
+# DINESH TO FILL
 
-A demo companion for solo builders, built for the Meta Global AI Developer Hackathon (Indie track). It plans the demo storyline from day one, checks recorded takes against stated steps, redacts secrets locally, and cuts the final video. Work in progress: so far it has a Muse Spark smoke test and the Stage 0 storyline draft.
+**A demo-video companion for solo hackathon builders: it plans the demo from day one, checks your takes, boxes out secrets locally, and cuts an honestly labelled video.**
 
-Setup: create a venv, `pip install -r requirements.txt`, copy `.env.example` to `.env` and fill in `MODEL_API_KEY`, then run `python smoke_test.py`.
+Built for the Meta Global AI Developer Hackathon (Indie track).
 
-Draft storylines: `python draft_storyline.py <idea file> <rules file>`. It writes one variant per demo structure in `prompts/structures.md` (each a `## Name` heading plus a description). The prompt is in `prompts/storyline.md`, and the review checklist added under each variant is in `prompts/review-checklist.md`. Use `--pick <name> ...` to draft only some structures, and add `--combine` to draft one hybrid: the first picked structure is the spine, and the others contribute beats (instructions in `prompts/combine.md`). Add `--claim-check` to list, after a passing draft, every claim the storyline makes that the idea file doesn't state (prompt in `prompts/claim-check.md`).
+## What it is
 
-Web app: `python app.py` serves the storyline page, the readiness board and a "Draft storyline" button at http://127.0.0.1:8000 (this machine only). Plain static HTML and JS (`static/`) over FastAPI JSON endpoints. It shows the newest storyline in `../workspace/storylines/` and the newest checklist in `../workspace/checklists/`; set `WORKSPACE_DIR` to point it elsewhere, e.g. `tests/sample-workspace`. Three buttons run the scripts as background jobs (one runner in `app.py`, one job of each kind at a time, the page polls `/api/jobs`): "Draft storyline" runs `draft_storyline.py` on `workspace/inputs/idea.md` (the spec if missing) and `judging.md`, which redacts both files locally first; "Record" or "Upload audio file" saves a voice note to `workspace/voice-notes/inbox/` and runs `voice.py` on it, then shows the transcript (or says it is empty); "Update progress" runs `stage1_update.py` on the storyline and variant shown and then shows the new checklist. Each is a live Meta call, and the page shows what the script printed (redaction counts, tokens, cost). The readiness board shows the checklist made for the storyline and variant on screen, and says so when there isn't one. The **Takes** page lists `workspace/takes/`, runs `check_takes.py` on the checklist, takes and steps you pick, and shows each step's verdict with its proof or break frame. The **Final cut** page makes the title card and thumbnail (`make_assets.py`), narrates (`narrate.py`, off with the reason shown until the ElevenLabs keys are in `.env`) and runs `cut_video.py`, with a progress bar, then plays the video and shows the proof card and the leak-report counts. A job's printed lines show while it runs.
+A solo builder usually leaves the demo video to the last night. Features that worked in trials break while recording. Most takes have one good stretch. Server and agent waits eat the runtime. Personal details get blurred by hand.
 
-Script page and storyline editing (in the web app): the **Script** page opens a script from `workspace/scripts/` (`{source, words_per_second, segments}`, the video in order) and shows each segment with its thumbnail, kind, step, take, in/out times, speed, output length, label, caption, narration (with a live word count against output length x `words_per_second`) and audio player, plus the total runtime. Every text field, in/out time and speed is editable, and segments can be moved up or down or dropped. "Save as new file" always writes a new timestamped script and never overwrites; a segment whose narration changed loses its audio on save (the audio was made from the old line). "Validate" is local and free (`validate_script.py`): a line that doesn't fit its time or fills under 70% of it, a line that isn't a full sentence, anything `redact_text` would hide, numbers or names the storyline doesn't contain ("check this"), invalid times and a total over 180 s. "Improve" sends the ticked lines, their lengths and the storyline's text (all through `redact_text`) to one Muse Spark call (`python improve_script.py <script> --ids s03,s05 --note "shorter"`, prompt in `prompts/improve-script.md`), then shows old against new for you to accept or reject; proposals are written to `workspace/scripts/improvements/`. The pipeline buttons run `cut_video.py <check> --plan` (Plan cut), `script_narration.py` (Write narration), `narrate.py --script` (Narrate: a free stand-in voice, or ElevenLabs after a confirm click that shows the character count and a rough cost) and `cut_video.py --script` (Render, which plays the result). The **Storyline** page can edit every step (title, what is shown, narration, seconds, judging criteria): saving writes a new `storylines-<timestamp>.json` in the drafter's schema. Its Revise box sends a brief to `draft_storyline.py --revise`. The **Final cut** page now also passes the storyline on screen (captions) and a music bed from `workspace/assets/music/` to `cut_video.py`. Optional segment fields are shown and editable when present: `focus` (box drawn on the thumbnail in take pixels, with its target text; the text and box numbers can be edited or the focus cleared), a `chapter` kind whose `image` is its thumbnail, `asr` (what Voice Transcribe heard, flagged words marked, the match %; Validate warns under 90%) and `credits` (small "model · job" badges; lines Improve rewrites get "muse-spark-1.3 · improved line", segments you change by hand get "Dinesh · edited" on save, and the audio and `asr` of a changed line are dropped). Revised storylines (`revised-*.json`) count as storylines. Offline tests (no cloud calls): `python tests/script_editor/test_script_editor.py`; the sample script is in `tests/sample-workspace/scripts/`.
+DINESH TO FILL works on the video alongside the build:
+- It drafts the demo storyline on day one.
+- It keeps the plan in step with what really works.
+- It checks each recorded take against what its step should show.
+- It cuts the final video with every speed-up, trim and stitch labelled.
 
-Revise a storyline once things work: `python draft_storyline.py --revise <storyline JSON> [--variant N] --brief <md> [--checklist <JSON>] [--claim-check]`. One Spark call rewrites the variant from what the checklist says really works (default: the newest checklist made for that storyline and variant) and the brief's notes, and writes `revised-<timestamp>.json` and `.md`: the whole source file, with every variant kept in the same order and only the chosen one replaced (marked "revised" in the `.md`). The checks and `--claim-check` cover only the revised variant. The prompt is in `prompts/revise.md`.
+It works only from your docs, voice notes and recordings. It never reads your code.
 
-Local redaction (no cloud calls): `python redact.py <file>` hides secrets in a text file or a screenshot and writes `<name>.redacted.<ext>` plus `<name>.redacted.leak-report.json` (counts per kind, boxes, masked previews). Images are read with RapidOCR (ONNX, CPU) and secrets get solid black boxes, never blur. The patterns are one list at the top of `redact.py`. Recall test on synthetic screenshots with planted fake secrets: `python tests/redaction/recall_test.py`.
+## How it works
 
-Update the step checklist (Stage 1): `python stage1_update.py <storyline JSON> [--variant N]`. It reads the newest session docs in `workspace/sessions/*.md` and voice-note transcripts in `workspace/voice-notes/*.txt` (the 5 most recently changed of each: `MAX_SESSION_DOCS` and `MAX_VOICE_NOTES` at the top of `stage1_update.py`; older ones are left out and the count is printed), redacts them locally with `redact.py` (from the local-redaction branch), and makes one call that returns each step's status (works / partly works / flaky / missing), an expected end state, evidence quotes, what to record today, questions for the builder and update lines. The checks reject any evidence quote that isn't copied verbatim from the redacted docs. It writes `workspace/checklists/<timestamp>.json` (with a `source` field: the storyline path and variant it was made for) and a Markdown readiness board beside it. The prompt is in `prompts/stage1.md`. Offline tests: `python test_stage1_update.py`.
+1. **Plan:** from your idea and the hackathon's rules, Muse Spark drafts storyline variants aimed at the judging criteria, with every step marked "not built yet". You can combine structures into a hybrid. Once things work, a revise replaces one variant from a brief and the latest checklist, and keeps the others unchanged.
+2. **Track progress:** from your session docs and voice notes, it updates a step checklist (works / partly works / flaky / missing) with evidence quotes, and tells you what to record today.
+3. **Check takes:** it finds where the screen changed and sends the frames after each change, redacted, to three independent checks of each step's stated end state. A step passes on 2 of 3. A split vote becomes a question for you, not a guess. Each kept step gets a proof frame, and each failed one the frame where it broke.
+4. **Redact locally:** secrets are covered with solid boxes in frames and masked in text, on your machine, before those frames and texts are sent.
+5. **Cut honestly:** it uses one continuous take when one passes every step, otherwise labelled stitches. Waits are sped up and labelled, still screens are trimmed and labelled, and the video ends on a proof card.
+6. **Script and narrate:** it plans the cut as an editable script, writes one narration line per segment, voices the lines in your cloned voice, and can check the spoken audio against the script.
+7. **Edit in the app:** a local web app runs the main steps. You can edit the storyline and the script line by line, validate the script for free, and ask Muse Spark to improve chosen lines.
 
-Voice notes: `python voice.py <audio file>` turns one voice note (m4a, mp3, webm, wav) into text with Voice Transcribe and writes `workspace/voice-notes/<timestamp>.txt` plus a `.json` sidecar with the turns. It needs ffmpeg on PATH (`winget install Gyan.FFmpeg`).
+## Meta models and what each one does
 
-Check takes (Stage 2): `python check_takes.py <checklist JSON> <take.mp4> [more takes] [--steps 1,2]`. Each take (Game Bar / Snipping Tool MP4) is re-encoded to a constant 30 fps with ffmpeg, then compared locally at 4 fps to find when the screen changed (`changes`) and the quiet stretches that end in a change (`waits`). The thresholds are named constants at the top of `check_takes.py`. One frame just after each change (plus the first frame) is redacted with `redact_image`, shrunk to 1280 px wide, and sent to Muse Spark, which judges each step's stated expected end state (prompt in `prompts/take-check.md`). Each take is checked twice, with the frames in forward and then reverse order; if the two checks disagree, the step is "unsure" and becomes a question for the builder. It writes `workspace/takes/checks/<timestamp>.json` with per-step verdicts, proof and break frames, the best stretch per step across takes, and `one_take_pass`. `--frames-only` finds changes, waits and frames without redaction or any Meta call. Offline tests on a synthetic take: `python tests/take_check/test_check_takes.py`.
+| Model | Job |
+|---|---|
+| **Muse Spark 1.3** (`muse-spark-1.3`) | Drafts and revises the storyline, checks its claims, writes the step checklist, gives two of the three take-check votes (frames in forward and reverse order), writes the narration lines, and improves chosen lines |
+| **Muse Spark 1.1** (`muse-spark-1.1`) | The independent third take-check vote, on the same redacted frames |
+| **Voice Transcribe** (`muse-voice-transcribe-1.0`) | Turns voice notes into text, and listens to the narration clips to check them against their lines |
+| **Muse Image** (`muse-image-1.0`) | Text-free backgrounds for the title card, thumbnail, chapter cards and before/after card (Pillow draws the text, because image models misspell it) |
 
-Third vote: each take now gets a third, independent check from a different Meta model, `muse-spark-1.1`, on the same redacted frames in forward order (models are constants at the top of `check_takes.py`). A step passes when at least 2 of the 3 checks find its end state, fails when none does, and is "unsure" when exactly 1 does. On a pass, the proof frame is the earliest frame that at least 2 passing checks listed (or, if no frame has 2, the earliest any passing check listed). Each entry in `votes[]` records its `model` and frame `order`.
+Not Meta: **ElevenLabs** voices the narration in your cloned voice and can make the music bed. Finding secrets is done locally with OCR (RapidOCR) and patterns, not with any model.
 
-Title card and thumbnail: `python make_assets.py "<title>" "<subtitle>"` makes `workspace/assets/title-card.png` (1920x1080) and `thumbnail.png` (1280x720). One Muse Image call ($0.01) paints a text-free background, saved as `workspace/assets/background.png`; Pillow then draws the title and subtitle on top, because image models misspell and smear text. The image prompt is `prompts/title-card.md` (lines starting with `#` are notes and are not sent). Re-run with `--background workspace/assets/background.png` to change the text without a call.
+Every real model call (Muse Spark, Voice Transcribe, Muse Image, and ElevenLabs, marked not Meta) adds one line to `workspace/usage.jsonl` with its job, tokens or audio, and estimated cost. The app's **Meta models** page totals them per model and shows which model did what in each script.
 
-Narration in your cloned voice: `python narrate.py <storyline JSON> [--variant N]` sends each step's `narration` (through `redact_text` first) to ElevenLabs text-to-speech with the voice in `ELEVENLABS_VOICE_ID`, and writes `workspace/assets/narration/<timestamp>/step-<n>.mp3` plus `<timestamp>.json` (`{steps:[{number, file, duration_s}]}`, durations from ffprobe). It warns when a clip is longer than the step's `target_seconds`. It needs `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `.env` and ffprobe on PATH. Offline tests for both scripts (a fake HTTP layer): `python test_creative_assets.py`.
+The proof card ends with **What each Meta model did**, built only from the rendered script's credits and its take-check votes.
 
-Final cut (Stage 3, no cloud calls): `python cut_video.py <take-check JSON> [--narration <JSON>] [--title-card <PNG>]` cuts one MP4 from the takes the take checker chose. It uses `one_take_pass` when there is one, otherwise each step's `best[]` stretch. It speeds waits up 4x and labels every second of footage ("1x ONE TAKE", "SPED UP 4x", "STITCH: take a → take b", "HELD FRAME"), and boxes secrets locally: `redact_image` reads one frame per stable stretch between screen changes (one more per 10 s), and the boxes stay on until the next change. With narration, each step's clip starts with its step and is never cut short: a wait is slowed, or the last frame held. The take audio stays under it, ducked to 20% (fast down, slow back up), and is muted in sped-up waits. It writes `workspace/final/<ts>.mp4` (H.264 + AAC, 1080p, warns over 3:00), `<ts>.proof-card.png` (also the last 6 s of the video), `<ts>.cut-log.json` and `<ts>.leak-report.json`. Test on synthetic takes: `python tests/final-cut/make_samples.py`, then `python cut_video.py tests/final-cut/sample-check.json`, then `python tests/final-cut/check_cut.py <cut log>`.
+## Privacy
 
-Creative cut (part of `cut_video.py`): the video opens with a few seconds of the last step's proof labelled "PREVIEW", then the title card, then the cut in order. Wherever the screen changes, it eases in on the changed region (at most 1.6x, and never more than 1.2x the take's own pixels so text stays sharp), glides between nearby regions, and eases out before a change elsewhere. Labels and captions stay fixed on screen. Still screens that aren't waits are cut down to 1.5 s after a change plus 0.5 s before the next, and each cut is labelled "TRIMMED n s OF STILL SCREEN"; in one take the running label becomes "1x ONE TAKE · TRIMMED". `--storyline <JSON> [--variant N]` burns each step's narration line in as a caption (lower third, two lines at a time, timed to the narration clip or to reading speed). `--music <file>` adds a bed at -30 LUFS that fades in and out and ducks under narration.
+- Before your files, transcripts and frames go to Meta or ElevenLabs, keys, tokens, emails, phone numbers and other secrets are found locally and boxed (images) or masked (text). Boxes are solid, never blur.
+- Audio can't be redacted: voice notes and narration clips go to Voice Transcribe as they are.
+- Every render writes a leak report.
+- Every Meta call is on the standard tier, never a `-contributor` model.
+- The web app listens on 127.0.0.1 only.
 
-Music bed: `python make_music.py --stand-in` makes a local placeholder bed (no network). `python make_music.py --yes` makes one 3-minute instrumental bed with ElevenLabs Eleven Music (`music_v2_5`, falling back to `music_v1`; about $0.45 at $0.15 a minute); only the style prompt is sent. Without `--yes` it prints the cost and sends nothing. Both write to `workspace/assets/music/`.
+## Install
 
-Chapter cards and before/after card (Muse Image, same method as the title card): `python make_assets.py --chapters <storyline JSON> [--variant N]` makes one 1920x1080 card per step with "Step N" and the step title drawn by Pillow over a text-free Muse Image background (one call per card, $0.01 each), into `workspace/assets/chapters/<timestamp>/step-<n>.png` plus `<timestamp>.json`. Only the style prompt (`prompts/chapter-card.md`, one for all cards so they look like a set) and the step title go to Muse Image, after `redact_text`. `python make_assets.py --split "<left label>" "<right label>"` makes `workspace/assets/before-after.png`: one background (`prompts/split-card.md`) with the left half greyed ("before") and the right in colour ("after"), labels drawn by Pillow; `--background <png>` reuses a saved one for free. `python make_assets.py --add-chapters <script JSON> <chapters JSON>` writes a new timestamped script file in the script's folder with a `chapter` segment before each step's first footage segment (the old script is never changed); rendering chapters is `cut_video.py`'s job.
+You need:
+- Windows (the video and card text use Segoe UI from `C:\Windows\Fonts`)
+- Python 3.12
+- ffmpeg and ffprobe on PATH (`winget install Gyan.FFmpeg`)
+- a Meta Model API key
+- optional, for narration and music: an ElevenLabs API key and the id of your cloned voice
 
-Narration check: `python check_narration.py <script JSON>` listens to each segment's narration clip (`audio`) with Voice Transcribe and compares what it hears with the segment's `narration` line. Each checked segment gets `asr` (`text`, `match` from 0 to 1, `flagged` words that differ, `words`) and a `credits` entry; the result is written as a new timestamped script file next to the input (or in `--out-dir`), never over the old one. Only the narration audio goes to Meta. Voice Transcribe has no word-level timestamps, so the `words` times are estimates: each turn's words are spread across the turn by length. A flag means the transcription differs, not necessarily that the voice said it wrong. Needs ffmpeg on PATH. Offline tests (nothing is sent): `python tests/narration_check/test_check_narration.py`.
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
 
-Narration script (four steps, one file between them): `python cut_video.py <take-check JSON> --plan --storyline <JSON> [--variant N] [--title-card <PNG>]` lays the cut out as `workspace/scripts/<ts>.json` without rendering. It has segments in video order (preview, title, footage, waits, proof), each with one frame redacted locally. Short footage is joined to a neighbour, and long footage is split at a screen change, so each segment fits one spoken line. A sped-up wait ends as soon as its outcome appears; the still screen after it is trimmed and labelled, never sped up. `python script_narration.py <script>` sends Muse Spark the redacted frames, the storyline and each segment's length, and writes one line per segment (70-100% of its time at 2.5 words/s) plus captions into a new script. `python narrate.py --script <script> --yes` voices each line with ElevenLabs, using request stitching so lines sound like one read; without `--yes` it prints the cost and sends nothing, and `--stand-in` makes local placeholder audio instead. `python cut_video.py --script <script> [--music <file>]` renders exactly what the script says. A line is never cut: a wait is slowed, footage runs on into the still screen the next segment skips, or the last frame is held, and there is at least 0.3 s between lines. Each step writes a new file. Offline test: `python tests/narration-script/test_narrate_script.py`.
+Put your keys in `.env`:
 
-No preview by default (since round 5): the video starts with the title card, and `--plan` writes no PREVIEW segment. `--preview` brings the labelled preview back. Captions are smaller: 40 px text on a lighter, tighter box (the sizes are named constants at the top of `cut_video.py`).
+```
+MODEL_API_KEY=...
+ELEVENLABS_API_KEY=...
+ELEVENLABS_VOICE_ID=...
+```
 
-Narration pace: lines are written for 3.4 words a second (`WORDS_PER_SECOND` in `cut_video.py`, saved in every script), and `narrate.py` asks ElevenLabs for speed 0.9 (`VOICE_SPEED`). The builder's clone spoke 3.8 words a second at speed 1.0, and 3.8 x 0.9 = 3.4. `cut_video.py --reuse-redaction <leak report>` reuses an earlier render's boxes for stable stretches that match exactly (same take file, unchanged size and modified time, same start and end), and reads everything else fresh; it prints how many it reused.
+Check the key with one small Muse Spark call:
+
+```powershell
+python smoke_test.py
+```
+
+## Use
+
+Start the app and open http://127.0.0.1:8000:
+
+```powershell
+python app.py
+```
+
+The app and the scripts read and write a `workspace/` folder next to the repo folder. Put your idea in `workspace/inputs/idea.md`, and the hackathon's rules and judging criteria in `workspace/inputs/judging.md`. Put recordings in `workspace/takes/`.
+
+The pages, in the order you'd use them:
+1. **Storyline:** press **Draft storyline** (in the top bar), read the variants, and edit any step. Pick the storyline file and variant to work from: the choice is kept in `workspace/app-state.json`, and every page uses it. Later, write a brief and press **Revise this variant**.
+2. **Readiness board:** record or upload a voice note, then press **Update progress** to see which steps work.
+3. **Takes:** pick a checklist, takes and steps, and check them. Each step shows its verdict with the proof or break frame.
+4. **Script:** **Plan cut** from a take check, **Write narration**, then **Validate** and **Improve** chosen lines. **Narrate** with a free stand-in tone or with ElevenLabs (after a confirm that shows the cost), then **Render**. The page says how many lines have a real voice, and asks before rendering stand-in audio.
+5. **Final cut:** make the title card and thumbnail, then watch the rendered video with its proof card and leak-report counts. This page can also narrate the storyline's steps and cut a video straight from a take check, without a script.
+
+While a job runs, its button says "Running…" and its status line shows a timer and the lines the script prints. Every Meta or ElevenLabs job is a live, paid call.
+
+Each step also runs from the command line, and a few run only there: the claim check, chapter and before/after cards, the music bed, and the narration check. Run the scripts from the repo folder, because they read `.env` from the current folder. The usual order:
+
+```powershell
+python draft_storyline.py ..\workspace\inputs\idea.md ..\workspace\inputs\judging.md --claim-check
+python voice.py <voice-note.m4a>
+python stage1_update.py <storyline.json> --variant 1
+python draft_storyline.py --revise <storyline.json> --variant 1 --brief <brief.md> --claim-check
+python check_takes.py <checklist.json> <take.mp4>
+python make_assets.py "<title>" "<subtitle>"
+python cut_video.py <take-check.json> --plan --storyline <storyline.json> --title-card ..\workspace\assets\title-card.png
+python script_narration.py <script.json>
+python narrate.py --script <script.json> --yes
+python check_narration.py <script.json>
+python cut_video.py --script <script.json> --music <bed.mp3>
+```
+
+Each step writes a new file and never overwrites the old one. Every option, output file, cost and offline test is in [REFERENCE.md](REFERENCE.md).
+
+## Limitations
+
+- The take checker's votes can disagree; it then asks you instead of guessing.
+- Local redaction depends on OCR. Tiny or low-contrast text can be missed, and a 1080p frame takes 10 to 25 seconds on CPU, so a cut takes minutes.
+- Voice notes and narration clips are sent as audio, without redaction.
+- Voice Transcribe has no word-level timestamps, so word timings in the narration check are estimates.
+- Narration needs ElevenLabs (paid). The stand-in is a tone, not a voice.
+- It runs on one machine, one job of each kind at a time, and on Windows only.
+
+
+## Credits
+
+Built during the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026) by Dinesh, with AI coding agents. It uses Meta's Muse Spark, Muse Image and Voice Transcribe through the Meta Model API, plus ElevenLabs, RapidOCR, FastAPI, Pillow and ffmpeg.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
